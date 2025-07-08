@@ -1,4 +1,4 @@
-# === 最終效能與模型平衡版 main.py ===
+# === 依您最終指示修正的 main.py ===
 
 import os
 import io
@@ -55,11 +55,12 @@ try:
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 【核心修正】將文字/視覺模型統一為您指定的 Flash 版本以優化效能
+        # 【核心修正】完全依照您的指示設定模型
+        # 文字/視覺/翻譯模型統一使用 gemini-2.5-flash
         text_vision_model = GenerativeModel("gemini-2.5-flash")
-        # 繪圖模型維持不變
+        # 繪圖模型使用 imagen-3.0
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
-        print("Vertex AI initialized successfully with performance-optimized models.")
+        print("Vertex AI initialized successfully with user-specified models: gemini-2.5-flash & imagen-3.0.")
     else:
         raise ValueError("GCP_SERVICE_ACCOUNT_JSON secret not found.")
 except Exception as e:
@@ -79,9 +80,8 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 def translate_prompt_for_drawing(prompt_in_chinese):
     if not text_vision_model: return prompt_in_chinese
     try:
-        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3: "{prompt_in_chinese}"'
-        # 使用輕快的 text_vision_model (現在是 Flash) 來進行翻譯
-        response = text_vision_model.generate_content(translation_prompt)
+        translation_prompt = f'You are an expert AI art prompt engineer. Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
+        response = text_vision_model.generate_content(translation_prompt) # 使用統一的 Flash 模型進行翻譯
         translated_prompt = response.text.strip().replace('"', '')
         print(f"原始中文提示詞: '{prompt_in_chinese}' -> 翻譯後的英文提示詞: '{translated_prompt}'")
         return translated_prompt
@@ -105,7 +105,7 @@ def upload_image_to_cloudinary(image_data):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Final Graduation Version) is Running!"
+    return "AI Bot (Final User-Specified Models) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -151,7 +151,13 @@ def handle_text_message(event):
             history_data_json = redis_client.get(f"chat_history_{user_id}")
             if history_data_json: history_data = json.loads(history_data_json)
         
-        reconstructed_history = [Content(**msg) for msg in history_data]
+        reconstructed_history = []
+        for message in history_data:
+            role = message.get("role")
+            parts = [Part.from_text(p.get("text", "")) for p in message.get("parts", [])]
+            if role and parts:
+                reconstructed_history.append(Content(role=role, parts=parts))
+
         chat_session = text_vision_model.start_chat(history=reconstructed_history)
         response = chat_session.send_message(user_message)
         reply_message_obj.append(TextMessage(text=response.text))
