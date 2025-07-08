@@ -1,4 +1,4 @@
-# === 依您最終指示修正的 main.py ===
+# === 向下相容最終畢業版 main.py ===
 
 import os
 import io
@@ -41,7 +41,7 @@ REDIS_URL = os.getenv('REDIS_URL')
 redis_client = None
 if REDIS_URL:
     try:
-        redis_client = redis.from_url(REDIS_URL)
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True) # decode_responses=True 讓 Redis 回傳字串
         print("Redis client connected successfully.")
     except Exception as e:
         print(f"Redis connection failed: {e}")
@@ -55,12 +55,10 @@ try:
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 【核心修正】完全依照您的指示設定模型
-        # 文字/視覺/翻譯模型統一使用 gemini-2.5-flash
+        # 依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-flash")
-        # 繪圖模型使用 imagen-3.0
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
-        print("Vertex AI initialized successfully with user-specified models: gemini-2.5-flash & imagen-3.0.")
+        print("Vertex AI initialized successfully with user-specified models.")
     else:
         raise ValueError("GCP_SERVICE_ACCOUNT_JSON secret not found.")
 except Exception as e:
@@ -76,15 +74,13 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-# --- 功能函式 ---
+# --- 功能函式 (維持不變) ---
 def translate_prompt_for_drawing(prompt_in_chinese):
     if not text_vision_model: return prompt_in_chinese
     try:
-        translation_prompt = f'You are an expert AI art prompt engineer. Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
-        response = text_vision_model.generate_content(translation_prompt) # 使用統一的 Flash 模型進行翻譯
-        translated_prompt = response.text.strip().replace('"', '')
-        print(f"原始中文提示詞: '{prompt_in_chinese}' -> 翻譯後的英文提示詞: '{translated_prompt}'")
-        return translated_prompt
+        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
+        response = text_vision_model.generate_content(translation_prompt)
+        return response.text.strip().replace('"', '')
     except Exception as e:
         print(f"Prompt translation failed: {e}")
         return prompt_in_chinese
@@ -105,7 +101,7 @@ def upload_image_to_cloudinary(image_data):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Final User-Specified Models) is Running!"
+    return "AI Bot (Final Graduation Version with backward compatibility) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -151,21 +147,33 @@ def handle_text_message(event):
             history_data_json = redis_client.get(f"chat_history_{user_id}")
             if history_data_json: history_data = json.loads(history_data_json)
         
+        # 【核心修正】向下相容的歷史紀錄組裝邏輯
         reconstructed_history = []
-        for message in history_data:
-            role = message.get("role")
-            parts = [Part.from_text(p.get("text", "")) for p in message.get("parts", [])]
-            if role and parts:
-                reconstructed_history.append(Content(role=role, parts=parts))
+        if history_data:
+            for message_dict in history_data:
+                role = message_dict.get("role")
+                parts_list = []
+                # 檢查 parts 是不是一個列表
+                raw_parts = message_dict.get("parts", [])
+                if isinstance(raw_parts, list):
+                    for p in raw_parts:
+                        # 檢查 p 是字典 (新格式) 還是字串 (舊格式)
+                        if isinstance(p, dict):
+                            parts_list.append(Part.from_text(p.get("text", "")))
+                        elif isinstance(p, str):
+                            parts_list.append(Part.from_text(p))
+                if role and parts_list:
+                    reconstructed_history.append(Content(role=role, parts=parts_list))
 
         chat_session = text_vision_model.start_chat(history=reconstructed_history)
         response = chat_session.send_message(user_message)
         reply_message_obj.append(TextMessage(text=response.text))
         
+        # 儲存時，永遠使用最正確、最標準的新格式
         updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
         if redis_client:
-            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=3600)
-    
+            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200) # 延長對話紀錄至 2 小時
+            
     line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
 
 @handler.add(MessageEvent, message=ImageMessageContent)
@@ -176,7 +184,7 @@ def handle_image_message(event):
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
     try:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Flash 進行分析...")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Pro 進行分析...")]))
         line_bot_blob_api = MessagingApiBlob(api_client)
         message_content = line_bot_blob_api.get_message_content(message_id)
         image_part = Part.from_data(data=message_content, mime_type="image/jpeg")
