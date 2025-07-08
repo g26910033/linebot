@@ -1,10 +1,11 @@
-# === 搭載短期記憶與精確搜尋的最終版 main.py ===
+# === 非同步處理 + 指定模型最終版 main.py ===
 
 import os
 import io
 import json
 import redis
 import re
+import threading
 from urllib.parse import quote_plus
 
 # 引入 Vertex AI 和 Google Auth 函式庫
@@ -30,6 +31,8 @@ import cloudinary.uploader
 
 # --- 初始化設定 ---
 app = Flask(__name__)
+
+# 從 Render 的環境變數中讀取我們的金鑰
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 GCP_SERVICE_ACCOUNT_JSON_STR = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
@@ -38,6 +41,7 @@ CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
 REDIS_URL = os.getenv('REDIS_URL')
 
+# 初始化 Redis 連線
 redis_client = None
 if REDIS_URL:
     try:
@@ -48,13 +52,14 @@ if REDIS_URL:
 else:
     print("Redis URL not found, memory will not be persistent.")
 
+# 初始化 Vertex AI
 try:
     if GCP_SERVICE_ACCOUNT_JSON_STR:
         credentials_info = json.loads(GCP_SERVICE_ACCOUNT_JSON_STR)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 依照您的指示設定模型
+        # 【核心修正】完全依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-flash")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
         print("Vertex AI initialized successfully with user-specified models.")
@@ -65,9 +70,11 @@ except Exception as e:
     text_vision_model = None
     image_gen_model = None
 
+# 設定 Cloudinary
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
+# 設定 LINE Bot
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
@@ -104,13 +111,13 @@ def search_location_with_gemini(query):
     if not text_vision_model: return None
     try:
         search_prompt = f"""
-        你是一個專業的地點搜尋與資料整理助理。請根據使用者提供的關鍵字，找出最相關的一個地點。
-        你的回覆必須是一個 JSON 物件，其中包含三個鍵：
-        1. "name": 地點的官方名稱。
-        2. "address": 該地點的完整地址。
-        3. "phone_number": 該地點的聯絡電話。如果找不到電話，這個鍵的值必須是字串 "無提供電話"。
-        請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
-        使用者查詢的關鍵字是：「{query}」
+        You are a professional location search and data organization assistant. Based on the user's query, find the single most relevant location.
+        Your response MUST be a single JSON object containing three keys:
+        1. "name": The official name of the location.
+        2. "address": The full address of the location.
+        3. "phone_number": The contact phone number. If no phone number is found, the value for this key must be the string "無提供電話".
+        Strictly adhere to the JSON format. Do not return any extra text or explanations.
+        User's query: "{query}"
         """
         response = text_vision_model.generate_content(search_prompt)
         return json.loads(clean_text(response.text))
@@ -122,13 +129,13 @@ def search_nearby_with_gemini(latitude, longitude, keyword="餐廳"):
     if not text_vision_model: return None
     try:
         search_prompt = f"""
-        你是一個專業的在地嚮導與地圖搜尋引擎。請根據使用者提供的經緯度，找出離他最近的 5 個符合「{keyword}」這個查詢條件的地點。
-        你的排序必須嚴格以「地理直線距離」作為唯一且最優先的標準，不要考慮店家名氣、評價或任何其他因素。
-        建議搜尋半徑約為 2 公里內。
-        你的回覆必須是一個 JSON 陣列，陣列中的每個物件都必須包含 "name", "address", 和 "phone_number"。
-        如果找不到電話，"phone_number" 的值必須是字串 "無提供電話"。
-        請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
-        使用者位置：緯度 {latitude}, 經度 {longitude}
+        You are a professional local guide and map search engine. Based on the user's provided latitude and longitude, find the 5 closest locations that match the query: "{keyword}".
+        You MUST sort the results strictly by geographical distance, not by popularity, ratings, or any other factor.
+        The search radius should be approximately 2 kilometers.
+        Your response MUST be a JSON array, where each object in the array contains "name", "address", and "phone_number".
+        If a phone number is not found for a location, the value for "phone_number" must be the string "無提供電話".
+        Strictly adhere to the JSON format. Do not return any extra text or explanations.
+        User's location: Latitude {latitude}, Longitude {longitude}
         """
         response = text_vision_model.generate_content(search_prompt)
         return json.loads(clean_text(response.text))
@@ -166,10 +173,22 @@ def create_location_carousel(places_list, line_bot_api, user_id):
     else:
         line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，AI回傳的資料格式有誤，無法為您顯示地點。")]))
 
+def run_long_task_in_background(target_func, args_tuple):
+    thread = threading.Thread(target=target_func, args=args_tuple)
+    thread.start()
+
+def nearby_search_worker(user_id, latitude, longitude, keyword):
+    api_client = ApiClient(configuration)
+    line_bot_api = MessagingApi(api_client)
+    print(f"背景任務開始：為使用者 {user_id} 搜尋「{keyword}」")
+    places = search_nearby_with_gemini(latitude, longitude, keyword=keyword)
+    create_location_carousel(places, line_bot_api, user_id)
+    print(f"背景任務結束：使用者 {user_id} 的搜尋結果已發送。")
+    
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Final Version with Short-Term Memory) is Running!"
+    return "AI Bot Final Version with Async Tasks is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -188,7 +207,7 @@ def handle_text_message(event):
     user_id = event.source.user_id
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
-    
+
     if not text_vision_model:
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="Gemini AI 功能未啟用。")]))
         return
@@ -203,6 +222,7 @@ def handle_text_message(event):
         prompt_chinese = user_message.split("畫", 1)[1].strip()
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到繪圖指令：「{prompt_chinese}」。\n正在翻譯並生成圖片...")]))
         prompt_english = translate_prompt_for_drawing(prompt_chinese)
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"翻譯完成，專業指令為：「{prompt_english}」。\n正在請 Imagen 3 模型繪製...")]))
         image_data, gen_status = generate_image_with_vertex_ai(prompt_english)
         if image_data:
             image_url, upload_status = upload_image_to_cloudinary(image_data)
@@ -217,11 +237,12 @@ def handle_text_message(event):
     elif user_message.startswith(("搜尋", "尋找")):
         query = user_message.replace("搜尋", "").replace("尋找", "").strip()
         if "附近" in query:
-            search_keyword = query.replace("附近", "").strip()
+            parts = query.split("附近")
+            search_keyword = (parts[0].strip() or parts[1].strip())
             if not search_keyword: search_keyword = "餐廳"
             if redis_client:
                 redis_client.set(f"nearby_query_{user_id}", search_keyword, ex=300)
-            line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，要搜尋您附近的「{search_keyword}」，請點擊左下角的「+」按鈕，分享您的位置。")]))
+            line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，要搜尋您附近的「{search_keyword}」，請點擊左下角的「+」按鈕，分享您的位置給我喔！")]))
             return
         
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到！正在為您搜尋「{query}」...")]))
@@ -234,18 +255,14 @@ def handle_text_message(event):
         if redis_client:
             history_data_json = redis_client.get(f"chat_history_{user_id}")
             if history_data_json: history_data = json.loads(history_data_json)
+        
         reconstructed_history = []
         if history_data:
             for msg in history_data:
                 role = msg.get("role")
-                parts_list = []
-                raw_parts = msg.get("parts", [])
-                if isinstance(raw_parts, list):
-                    for p in raw_parts:
-                        if isinstance(p, dict): parts_list.append(Part.from_text(p.get("text", "")))
-                        elif isinstance(p, str): parts_list.append(Part.from_text(p))
+                parts_list = [Part.from_text(p.get("text", "")) if isinstance(p, dict) else Part.from_text(p) for p in msg.get("parts", [])]
                 if role and parts_list: reconstructed_history.append(Content(role=role, parts=parts_list))
-        
+
         chat_session = text_vision_model.start_chat(history=reconstructed_history)
         response = chat_session.send_message(user_message)
         cleaned_text = clean_text(response.text)
@@ -298,11 +315,14 @@ def handle_location_message(event):
     line_bot_api.reply_message_with_http_info(
         ReplyMessageRequest(
             reply_token=reply_token,
-            messages=[TextMessage(text=f"收到您的位置！正在搜尋您附近的「{search_keyword}」...")]
+            messages=[TextMessage(text=f"收到您的位置！已將您的「{search_keyword}」搜尋任務交由背景處理，請稍候，完成後會主動通知您。")]
         )
     )
-    places = search_nearby_with_gemini(latitude, longitude, keyword=search_keyword)
-    create_location_carousel(places, line_bot_api, user_id)
+    
+    run_long_task_in_background(
+        nearby_search_worker, 
+        (user_id, latitude, longitude, search_keyword)
+    )
 
 # --- 啟動伺服器 ---
 if __name__ == "__main__":
