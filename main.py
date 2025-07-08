@@ -1,4 +1,4 @@
-# === 非同步處理 + 指定模型最終版 main.py ===
+# === 記憶功能修正 + 指定模型最終版 main.py ===
 
 import os
 import io
@@ -31,8 +31,6 @@ import cloudinary.uploader
 
 # --- 初始化設定 ---
 app = Flask(__name__)
-
-# 從 Render 的環境變數中讀取我們的金鑰
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 GCP_SERVICE_ACCOUNT_JSON_STR = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
@@ -41,7 +39,6 @@ CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
 REDIS_URL = os.getenv('REDIS_URL')
 
-# 初始化 Redis 連線
 redis_client = None
 if REDIS_URL:
     try:
@@ -52,14 +49,13 @@ if REDIS_URL:
 else:
     print("Redis URL not found, memory will not be persistent.")
 
-# 初始化 Vertex AI
 try:
     if GCP_SERVICE_ACCOUNT_JSON_STR:
         credentials_info = json.loads(GCP_SERVICE_ACCOUNT_JSON_STR)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 【核心修正】完全依照您的指示設定模型
+        # 依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-flash")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
         print("Vertex AI initialized successfully with user-specified models.")
@@ -70,11 +66,9 @@ except Exception as e:
     text_vision_model = None
     image_gen_model = None
 
-# 設定 Cloudinary
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
-# 設定 LINE Bot
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
@@ -188,7 +182,7 @@ def nearby_search_worker(user_id, latitude, longitude, keyword):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot Final Version with Async Tasks is Running!"
+    return "AI Bot (Final Memory Fix Version) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -268,7 +262,8 @@ def handle_text_message(event):
         cleaned_text = clean_text(response.text)
         reply_message_obj = [TextMessage(text=cleaned_text)]
         
-        updated_history = [{"role": c.role, "parts": [{"text": p.text}]} for c in chat_session.history]
+        # 【核心修正】修正 NameError: name 'p' is not defined
+        updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
         if redis_client:
             redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200)
         
@@ -302,9 +297,7 @@ def handle_location_message(event):
     user_id = event.source.user_id
     latitude = event.message.latitude
     longitude = event.message.longitude
-    api_client = ApiClient(configuration)
-    line_bot_api = MessagingApi(api_client)
-
+    
     search_keyword = "餐廳"
     if redis_client:
         stored_keyword = redis_client.get(f"nearby_query_{user_id}")
@@ -312,6 +305,8 @@ def handle_location_message(event):
             search_keyword = stored_keyword
             redis_client.delete(f"nearby_query_{user_id}")
     
+    api_client = ApiClient(configuration)
+    line_bot_api = MessagingApi(api_client)
     line_bot_api.reply_message_with_http_info(
         ReplyMessageRequest(
             reply_token=reply_token,
