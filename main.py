@@ -1,4 +1,4 @@
-# === 採用您指定模型的最終版 main.py ===
+# === 對話記憶功能最終修正版 main.py ===
 
 import os
 import io
@@ -46,10 +46,10 @@ try:
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 【核心修正】完全依照您的指示設定模型
+        # 依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-pro")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
-        print("Vertex AI initialized successfully with User-Specified models.")
+        print("Vertex AI initialized successfully with user-specified models.")
     else:
         raise ValueError("GCP_SERVICE_ACCOUNT_JSON secret not found.")
 except Exception as e:
@@ -91,7 +91,7 @@ def upload_image_to_cloudinary(image_data):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (User-Specified Models) is Running!"
+    return "AI Bot (Memory Fix) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -133,11 +133,22 @@ def handle_text_message(event):
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=gen_status)]))
         return
     else:
-        history_data = chat_histories.get(user_id, [])
-        chat_session = text_vision_model.start_chat(history=history_data)
+        history_data_from_memory = chat_histories.get(user_id, [])
+        
+        # 【核心修正】從記憶體取出「零件」後，進行「組裝」
+        reconstructed_history = []
+        for message in history_data_from_memory:
+            role = message.get("role")
+            parts = [Part.from_text(p) for p in message.get("parts", [])]
+            if role and parts:
+                reconstructed_history.append(Content(role=role, parts=parts))
+
+        # 用組裝好的「完整家具」(Content 物件列表) 開始對話
+        chat_session = text_vision_model.start_chat(history=reconstructed_history)
         response = chat_session.send_message(user_message)
         reply_message_obj.append(TextMessage(text=response.text))
         
+        # 儲存時，一樣把它拆解成「零件」存回去
         updated_history = []
         for content in chat_session.history:
             role = "user" if content.role == "user" else "model"
