@@ -1,4 +1,4 @@
-# === 最終畢業版 main.py - 搭載AI翻譯官v2.0 ===
+# === 最終效能與模型平衡版 main.py ===
 
 import os
 import io
@@ -55,18 +55,17 @@ try:
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 依照您的指示，設定最終的模型團隊
-        text_vision_model = GenerativeModel("gemini-2.5-pro")
+        # 【核心修正】將文字/視覺模型統一為您指定的 Flash 版本以優化效能
+        text_vision_model = GenerativeModel("gemini-2.5-flash")
+        # 繪圖模型維持不變
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
-        translator_model = GenerativeModel("gemini-2.5-flash") # 專門用於翻譯的輕快模型
-        print("Vertex AI initialized successfully with final user-specified models.")
+        print("Vertex AI initialized successfully with performance-optimized models.")
     else:
         raise ValueError("GCP_SERVICE_ACCOUNT_JSON secret not found.")
 except Exception as e:
     print(f"Vertex AI initialization failed: {e}")
     text_vision_model = None
     image_gen_model = None
-    translator_model = None
 
 # 設定 Cloudinary
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
@@ -77,35 +76,18 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
 # --- 功能函式 ---
-
-# 【核心升級】使用範例教學法，強化翻譯提示詞
 def translate_prompt_for_drawing(prompt_in_chinese):
-    if not translator_model:
-        print("Translator model not available, using original prompt.")
-        return prompt_in_chinese
+    if not text_vision_model: return prompt_in_chinese
     try:
-        # 設計一個包含範例的、更強硬的翻譯指令
-        translation_prompt = f"""
-You are a highly skilled AI prompt engineer specializing in transforming simple user ideas into rich, detailed English prompts for advanced text-to-image models like Imagen 3.
-Your task is to convert the user's Traditional Chinese input into a powerful English prompt.
-Follow these examples strictly. Do not add any explanation.
-
-Input: "一隻貓"
-Output: "A photorealistic cat, detailed fur, cinematic lighting, 4k, high detail"
-
-Input: "台北101的夜景"
-Output: "Stunning night view of Taipei 101, vibrant city lights, long exposure photography, neon reflections on wet streets, cyberpunk aesthetic"
-
-Input: "{prompt_in_chinese}"
-Output: 
-"""
-        response = translator_model.generate_content(translation_prompt)
-        translated_prompt = response.text.strip().replace('"', '') # 去除可能產生的引號
+        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3: "{prompt_in_chinese}"'
+        # 使用輕快的 text_vision_model (現在是 Flash) 來進行翻譯
+        response = text_vision_model.generate_content(translation_prompt)
+        translated_prompt = response.text.strip().replace('"', '')
         print(f"原始中文提示詞: '{prompt_in_chinese}' -> 翻譯後的英文提示詞: '{translated_prompt}'")
         return translated_prompt
     except Exception as e:
         print(f"Prompt translation failed: {e}")
-        return prompt_in_chinese # 翻譯失敗時，還是用原文嘗試
+        return prompt_in_chinese
 
 def generate_image_with_vertex_ai(prompt):
     if not image_gen_model: return None, "圖片生成功能未啟用。"
@@ -123,7 +105,7 @@ def upload_image_to_cloudinary(image_data):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Graduation Version) is Running!"
+    return "AI Bot (Final Graduation Version) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -142,16 +124,17 @@ def handle_text_message(event):
     user_id = event.source.user_id
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
+    reply_message_obj = []
 
-    if user_message.startswith("畫"):
+    if not text_vision_model:
+        reply_message_obj.append(TextMessage(text="Gemini AI 功能未啟用或設定錯誤。"))
+    elif user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
+        if redis_client: redis_client.delete(f"chat_history_{user_id}")
+        reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
+    elif user_message.startswith("畫"):
         prompt_chinese = user_message.split("畫", 1)[1].strip()
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到中文指令：「{prompt_chinese}」。\n正在請 Gemini Flash 翻譯官轉換為專業繪圖指令...")]))
-        
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到繪圖指令：「{prompt_chinese}」。\n正在翻譯並生成圖片...")]))
         prompt_english = translate_prompt_for_drawing(prompt_chinese)
-        
-        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"翻譯完成，專業指令為：「{prompt_english}」。\n正在請 Imagen 3 模型繪製...")]))
-
         image_data, gen_status = generate_image_with_vertex_ai(prompt_english)
         if image_data:
             image_url, upload_status = upload_image_to_cloudinary(image_data)
@@ -162,29 +145,20 @@ def handle_text_message(event):
         else:
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=gen_status)]))
         return
-
-    # 其他文字指令的處理邏輯
-    reply_message_obj = []
-    if not text_vision_model:
-        reply_message_obj.append(TextMessage(text="Gemini AI 功能未啟用或設定錯誤。"))
-    else:
-        if user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
-            if redis_client: redis_client.delete(f"chat_history_{user_id}")
-            reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
-        else:
-            history_data = []
-            if redis_client:
-                history_data_json = redis_client.get(f"chat_history_{user_id}")
-                if history_data_json: history_data = json.loads(history_data_json)
-            
-            reconstructed_history = [Content(**msg) for msg in history_data]
-            chat_session = text_vision_model.start_chat(history=reconstructed_history)
-            response = chat_session.send_message(user_message)
-            reply_message_obj.append(TextMessage(text=response.text))
-            
-            updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
-            if redis_client:
-                redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=3600)
+    else: # 一般聊天
+        history_data = []
+        if redis_client:
+            history_data_json = redis_client.get(f"chat_history_{user_id}")
+            if history_data_json: history_data = json.loads(history_data_json)
+        
+        reconstructed_history = [Content(**msg) for msg in history_data]
+        chat_session = text_vision_model.start_chat(history=reconstructed_history)
+        response = chat_session.send_message(user_message)
+        reply_message_obj.append(TextMessage(text=response.text))
+        
+        updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
+        if redis_client:
+            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=3600)
     
     line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
 
@@ -196,7 +170,7 @@ def handle_image_message(event):
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
     try:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Pro 進行分析...")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Flash 進行分析...")]))
         line_bot_blob_api = MessagingApiBlob(api_client)
         message_content = line_bot_blob_api.get_message_content(message_id)
         image_part = Part.from_data(data=message_content, mime_type="image/jpeg")
