@@ -1,9 +1,10 @@
-# === 向下相容最終畢業版 main.py ===
+# === 地圖搜尋強化版 main.py ===
 
 import os
 import io
 import json
 import redis
+import re
 
 # 引入 Vertex AI 和 Google Auth 函式庫
 import vertexai
@@ -18,17 +19,16 @@ from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi,
     PushMessageRequest, ReplyMessageRequest,
-    TextMessage, ImageMessage, MessagingApiBlob
+    TextMessage, ImageMessage, TemplateMessage,
+    CarouselTemplate, CarouselColumn, URIAction,
+    MessagingApiBlob
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent
 import cloudinary
 import cloudinary.uploader
 
 # --- 初始化設定 ---
-
 app = Flask(__name__)
-
-# 從 Render 的環境變數中讀取我們的金鑰
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 GCP_SERVICE_ACCOUNT_JSON_STR = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
@@ -37,25 +37,21 @@ CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
 REDIS_URL = os.getenv('REDIS_URL')
 
-# 初始化 Redis 連線
 redis_client = None
 if REDIS_URL:
     try:
-        redis_client = redis.from_url(REDIS_URL, decode_responses=True) # decode_responses=True 讓 Redis 回傳字串
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         print("Redis client connected successfully.")
     except Exception as e:
         print(f"Redis connection failed: {e}")
 else:
     print("Redis URL not found, memory will not be persistent.")
 
-# 初始化 Vertex AI
 try:
     if GCP_SERVICE_ACCOUNT_JSON_STR:
         credentials_info = json.loads(GCP_SERVICE_ACCOUNT_JSON_STR)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
-        
-        # 依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-flash")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
         print("Vertex AI initialized successfully with user-specified models.")
@@ -66,21 +62,21 @@ except Exception as e:
     text_vision_model = None
     image_gen_model = None
 
-# 設定 Cloudinary
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
-# 設定 LINE Bot
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-# --- 功能函式 (維持不變) ---
+def clean_text(text):
+    return re.sub(r'[*#]', '', text).strip()
+
 def translate_prompt_for_drawing(prompt_in_chinese):
     if not text_vision_model: return prompt_in_chinese
     try:
         translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
         response = text_vision_model.generate_content(translation_prompt)
-        return response.text.strip().replace('"', '')
+        return clean_text(response.text)
     except Exception as e:
         print(f"Prompt translation failed: {e}")
         return prompt_in_chinese
@@ -98,10 +94,9 @@ def upload_image_to_cloudinary(image_data):
         return upload_result.get('secure_url'), "圖片上傳成功！"
     except Exception as e: return None, f"圖片上傳時發生程式錯誤：{e}"
 
-# --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Final Graduation Version with backward compatibility) is Running!"
+    return "AI Bot (with Enhanced Location Search) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -120,14 +115,12 @@ def handle_text_message(event):
     user_id = event.source.user_id
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
-    reply_message_obj = []
-
+    
     if not text_vision_model:
-        reply_message_obj.append(TextMessage(text="Gemini AI 功能未啟用或設定錯誤。"))
-    elif user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
-        if redis_client: redis_client.delete(f"chat_history_{user_id}")
-        reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
-    elif user_message.startswith("畫"):
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="Gemini AI 功能未啟用。")]))
+        return
+
+    if user_message.startswith("畫"):
         prompt_chinese = user_message.split("畫", 1)[1].strip()
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到繪圖指令：「{prompt_chinese}」。\n正在翻譯並生成圖片...")]))
         prompt_english = translate_prompt_for_drawing(prompt_chinese)
@@ -141,40 +134,94 @@ def handle_text_message(event):
         else:
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=gen_status)]))
         return
-    else: # 一般聊天
-        history_data = []
-        if redis_client:
-            history_data_json = redis_client.get(f"chat_history_{user_id}")
-            if history_data_json: history_data = json.loads(history_data_json)
-        
-        # 【核心修正】向下相容的歷史紀錄組裝邏輯
-        reconstructed_history = []
-        if history_data:
-            for message_dict in history_data:
-                role = message_dict.get("role")
-                parts_list = []
-                # 檢查 parts 是不是一個列表
-                raw_parts = message_dict.get("parts", [])
-                if isinstance(raw_parts, list):
-                    for p in raw_parts:
-                        # 檢查 p 是字典 (新格式) 還是字串 (舊格式)
-                        if isinstance(p, dict):
-                            parts_list.append(Part.from_text(p.get("text", "")))
-                        elif isinstance(p, str):
-                            parts_list.append(Part.from_text(p))
-                if role and parts_list:
-                    reconstructed_history.append(Content(role=role, parts=parts_list))
 
-        chat_session = text_vision_model.start_chat(history=reconstructed_history)
-        response = chat_session.send_message(user_message)
-        reply_message_obj.append(TextMessage(text=response.text))
-        
-        # 儲存時，永遠使用最正確、最標準的新格式
-        updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
-        if redis_client:
-            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200) # 延長對話紀錄至 2 小時
+    elif user_message.startswith(("搜尋", "尋找")):
+        query = user_message.replace("搜尋", "").replace("尋找", "").strip()
+        reply_message_obj = []
+        if not query:
+            reply_message_obj.append(TextMessage(text="請告訴我要搜尋什麼店家或地址喔！"))
+        else:
+            search_prompt = f"""
+            你是一個專業的地點搜尋與資料整理助理。請根據使用者提供的關鍵字，找出最相關的一個地點。
+            你的回覆必須是一個 JSON 物件，其中包含四個鍵：
+            1. "name": 地點的官方名稱。
+            2. "address": 該地點的完整地址。
+            3. "phone_number": 該地點的聯絡電話。如果找不到電話，這個鍵的值必須是字串 "無提供電話"。
+            4. "map_url": 該地點的 Google Maps 搜尋連結。
             
-    line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
+            請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
+            使用者查詢的關鍵字是：「{query}」
+            """
+            try:
+                response = text_vision_model.generate_content(search_prompt)
+                cleaned_json_str = re.sub(r'```json\n|```', '', response.text).strip()
+                result_json = json.loads(cleaned_json_str)
+                
+                place_name = result_json.get("name")
+                place_address = result_json.get("address")
+                phone_number = result_json.get("phone_number", "無提供電話")
+                map_url = result_json.get("map_url")
+
+                if not all([place_name, place_address, map_url]):
+                    raise ValueError("AI 回傳的 JSON 格式不完整。")
+
+                display_text = f"{place_address}\n電話：{phone_number}"
+
+                template_message = TemplateMessage(
+                    alt_text=f'為您找到「{place_name}」',
+                    template=CarouselTemplate(
+                        columns=[
+                            CarouselColumn(
+                                title=place_name,
+                                text=display_text,
+                                actions=[URIAction(label='在 Google Maps 上打開', uri=map_url)]
+                            )
+                        ]
+                    )
+                )
+                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[template_message]))
+                return
+            except Exception as e:
+                print(f"Location search failed: {e}")
+                reply_message_obj.append(TextMessage(text=f"抱歉，搜尋「{query}」時發生錯誤，可能找不到該地點或 AI 回傳格式有誤。"))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
+
+    else: # 一般聊天或記憶功能
+        reply_message_obj = []
+        if user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
+            if redis_client: redis_client.delete(f"chat_history_{user_id}")
+            reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
+        else:
+            history_data = []
+            if redis_client:
+                history_data_json = redis_client.get(f"chat_history_{user_id}")
+                if history_data_json: history_data = json.loads(history_data_json)
+            
+            reconstructed_history = []
+            if history_data:
+                for msg in history_data:
+                    role = msg.get("role")
+                    parts_list = []
+                    raw_parts = msg.get("parts", [])
+                    if isinstance(raw_parts, list):
+                        for p in raw_parts:
+                            if isinstance(p, dict):
+                                parts_list.append(Part.from_text(p.get("text", "")))
+                            elif isinstance(p, str):
+                                parts_list.append(Part.from_text(p))
+                    if role and parts_list:
+                        reconstructed_history.append(Content(role=role, parts=parts_list))
+
+            chat_session = text_vision_model.start_chat(history=reconstructed_history)
+            response = chat_session.send_message(user_message)
+            cleaned_text = clean_text(response.text)
+            reply_message_obj.append(TextMessage(text=cleaned_text))
+            
+            updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
+            if redis_client:
+                redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200)
+        
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
 
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
@@ -184,21 +231,20 @@ def handle_image_message(event):
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
     try:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 flash 進行分析...")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini Flash 進行分析...")]))
         line_bot_blob_api = MessagingApiBlob(api_client)
         message_content = line_bot_blob_api.get_message_content(message_id)
         image_part = Part.from_data(data=message_content, mime_type="image/jpeg")
         prompt = "請用繁體中文，詳細描述這張圖片的內容。"
         if text_vision_model:
             response = text_vision_model.generate_content([image_part, prompt])
-            analysis_result = response.text
+            cleaned_analysis_result = clean_text(response.text)
+            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片分析結果：\n{cleaned_analysis_result}")]))
         else:
-            analysis_result = "圖片分析功能未啟用。"
-        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片分析結果：\n{analysis_result}")]))
+            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="圖片分析功能未啟用。")]))
     except Exception as e:
         print(f"Handle Image Message Error: {e}")
 
-# --- 啟動伺服器 ---
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 10000))
