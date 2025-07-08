@@ -184,7 +184,7 @@ def handle_image_message(event):
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
     try:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Pro 進行分析...")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 flash 進行分析...")]))
         line_bot_blob_api = MessagingApiBlob(api_client)
         message_content = line_bot_blob_api.get_message_content(message_id)
         image_part = Part.from_data(data=message_content, mime_type="image/jpeg")
