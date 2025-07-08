@@ -43,8 +43,8 @@ long_term_memory = {} # 用於儲存「記住/查詢」的內容
 try:
     # Render 會自動偵測 GOOGLE_APPLICATION_CREDENTIALS
     vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
-    text_vision_model = GenerativeModel("gemini-1.5-pro-latest")
-    image_gen_model = ImageGenerationModel.from_pretrained("imagegeneration@006")
+    text_vision_model = GenerativeModel("gemini-2.5-pro")
+    image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
     print("Vertex AI initialized successfully.")
 except Exception as e:
     print(f"Vertex AI initialization failed: {e}")
