@@ -1,8 +1,9 @@
-# === 對話記憶功能最終修正版 main.py ===
+# === 採用您指定模型 + Redis記憶 + 超時修正的最終版 main.py ===
 
 import os
 import io
 import json
+import redis # 引入 Redis 工具
 
 # 引入 Vertex AI 和 Google Auth 函式庫
 import vertexai
@@ -34,19 +35,27 @@ GCP_SERVICE_ACCOUNT_JSON_STR = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
 CLOUDINARY_CLOUD_NAME = os.getenv('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
+REDIS_URL = os.getenv('REDIS_URL')
 
-# 使用程式內存字典作為暫時記憶體
-chat_histories = {}
-long_term_memory = {}
+# 初始化 Redis 連線
+redis_client = None
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL)
+        print("Redis client connected successfully.")
+    except Exception as e:
+        print(f"Redis connection failed: {e}")
+else:
+    print("Redis URL not found, memory will not be persistent.")
 
-# 程式碼內直接讀取金鑰並初始化 Vertex AI
+# 初始化 Vertex AI
 try:
     if GCP_SERVICE_ACCOUNT_JSON_STR:
         credentials_info = json.loads(GCP_SERVICE_ACCOUNT_JSON_STR)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
         
-        # 依照您的指示設定模型
+        # 【核心修正】完全依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-pro")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
         print("Vertex AI initialized successfully with user-specified models.")
@@ -66,11 +75,10 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
 # --- 功能函式 ---
-def translate_prompt(prompt_in_chinese, task_type="image"):
+def translate_prompt(prompt_in_chinese):
     if not text_vision_model: return prompt_in_chinese
     try:
-        task_description = "an advanced AI image generation model like Imagen 3"
-        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for {task_description}: "{prompt_in_chinese}"'
+        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3: "{prompt_in_chinese}"'
         response = text_vision_model.generate_content(translation_prompt)
         return response.text.strip()
     except Exception: return prompt_in_chinese
@@ -91,7 +99,7 @@ def upload_image_to_cloudinary(image_data):
 # --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (Memory Fix) is Running!"
+    return "AI Bot (User-Specified Models + Redis) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -115,13 +123,13 @@ def handle_text_message(event):
     if not text_vision_model:
         reply_message_obj.append(TextMessage(text="Gemini AI 功能未啟用或設定錯誤。"))
     elif user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
-        if user_id in chat_histories:
-            del chat_histories[user_id]
+        if redis_client:
+            redis_client.delete(f"chat_history_{user_id}")
         reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
     elif user_message.startswith("畫"):
         prompt_chinese = user_message.split("畫", 1)[1].strip()
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到繪圖指令：「{prompt_chinese}」。\n正在翻譯並生成圖片...")]))
-        prompt_english = translate_prompt(prompt_chinese, "image")
+        prompt_english = translate_prompt(prompt_chinese)
         image_data, gen_status = generate_image_with_vertex_ai(prompt_english)
         if image_data:
             image_url, upload_status = upload_image_to_cloudinary(image_data)
@@ -132,30 +140,28 @@ def handle_text_message(event):
         else:
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=gen_status)]))
         return
-    else:
-        history_data_from_memory = chat_histories.get(user_id, [])
+    else: # 一般聊天
+        history_data = []
+        if redis_client:
+            history_data_json = redis_client.get(f"chat_history_{user_id}")
+            if history_data_json:
+                history_data = json.loads(history_data_json)
         
-        # 【核心修正】從記憶體取出「零件」後，進行「組裝」
         reconstructed_history = []
-        for message in history_data_from_memory:
+        for message in history_data:
             role = message.get("role")
             parts = [Part.from_text(p) for p in message.get("parts", [])]
             if role and parts:
                 reconstructed_history.append(Content(role=role, parts=parts))
 
-        # 用組裝好的「完整家具」(Content 物件列表) 開始對話
         chat_session = text_vision_model.start_chat(history=reconstructed_history)
         response = chat_session.send_message(user_message)
         reply_message_obj.append(TextMessage(text=response.text))
         
-        # 儲存時，一樣把它拆解成「零件」存回去
-        updated_history = []
-        for content in chat_session.history:
-            role = "user" if content.role == "user" else "model"
-            parts = [part.text for part in content.parts if hasattr(part, 'text')]
-            updated_history.append({"role": role, "parts": parts})
-        chat_histories[user_id] = updated_history
-        
+        updated_history = [{"role": content.role, "parts": [part.text for part in content.parts if hasattr(part, 'text')]} for content in chat_session.history]
+        if redis_client:
+            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=3600)
+            
     line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
 
 @handler.add(MessageEvent, message=ImageMessageContent)
@@ -179,8 +185,11 @@ def handle_image_message(event):
         line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片分析結果：\n{analysis_result}")]))
     except Exception as e:
         print(f"Handle Image Message Error: {e}")
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，分析圖片時發生了內部錯誤。")]))
 
 # --- 啟動伺服器 ---
 if __name__ == "__main__":
     from waitress import serve
-    serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # Render 會透過 PORT 環境變數來指定監聽的 port
+    port = int(os.environ.get("PORT", 10000))
+    serve(app, host="0.0.0.0", port=port)
