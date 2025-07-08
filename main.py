@@ -1,4 +1,4 @@
-# === 地圖搜尋強化版 main.py ===
+# === 最終畢業版 v2.0 - 依您指示打造 ===
 
 import os
 import io
@@ -23,12 +23,14 @@ from linebot.v3.messaging import (
     CarouselTemplate, CarouselColumn, URIAction,
     MessagingApiBlob
 )
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
 import cloudinary
 import cloudinary.uploader
 
 # --- 初始化設定 ---
 app = Flask(__name__)
+
+# 從 Render 的環境變數中讀取我們的金鑰
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 GCP_SERVICE_ACCOUNT_JSON_STR = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
@@ -37,6 +39,7 @@ CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
 REDIS_URL = os.getenv('REDIS_URL')
 
+# 初始化 Redis 連線
 redis_client = None
 if REDIS_URL:
     try:
@@ -47,11 +50,14 @@ if REDIS_URL:
 else:
     print("Redis URL not found, memory will not be persistent.")
 
+# 初始化 Vertex AI
 try:
     if GCP_SERVICE_ACCOUNT_JSON_STR:
         credentials_info = json.loads(GCP_SERVICE_ACCOUNT_JSON_STR)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         vertexai.init(project=credentials.project_id, location='us-central1', credentials=credentials)
+        
+        # 【核心修正】完全依照您的指示設定模型
         text_vision_model = GenerativeModel("gemini-2.5-flash")
         image_gen_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
         print("Vertex AI initialized successfully with user-specified models.")
@@ -62,19 +68,27 @@ except Exception as e:
     text_vision_model = None
     image_gen_model = None
 
+# 設定 Cloudinary
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
+# 設定 LINE Bot
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
+# --- 功能函式 ---
 def clean_text(text):
-    return re.sub(r'[*#]', '', text).strip()
+    """移除 Gemini 回應中不必要的 Markdown 符號"""
+    # 移除 ```json ... ``` 和 ```
+    cleaned_text = re.sub(r'```json\n|```', '', text)
+    # 移除 * 和 #
+    cleaned_text = re.sub(r'[*#]', '', cleaned_text)
+    return cleaned_text.strip()
 
 def translate_prompt_for_drawing(prompt_in_chinese):
     if not text_vision_model: return prompt_in_chinese
     try:
-        translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
+        translation_prompt = f'You are an expert AI art prompt engineer. Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3. Focus on cinematic and artistic keywords. Only output the English prompt: "{prompt_in_chinese}"'
         response = text_vision_model.generate_content(translation_prompt)
         return clean_text(response.text)
     except Exception as e:
@@ -94,9 +108,76 @@ def upload_image_to_cloudinary(image_data):
         return upload_result.get('secure_url'), "圖片上傳成功！"
     except Exception as e: return None, f"圖片上傳時發生程式錯誤：{e}"
 
+def search_location_with_gemini(query):
+    if not text_vision_model: return None
+    try:
+        search_prompt = f"""
+        你是一個專業的地點搜尋與資料整理助理。請根據使用者提供的關鍵字，找出最相關的一個地點。
+        你的回覆必須是一個 JSON 物件，其中包含四個鍵：
+        1. "name": 地點的官方名稱。
+        2. "address": 該地點的完整地址。
+        3. "phone_number": 該地點的聯絡電話。如果找不到電話，這個鍵的值必須是字串 "無提供電話"。
+        4. "map_url": 該地點的 Google Maps 搜尋連結。
+        請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
+        使用者查詢的關鍵字是：「{query}」
+        """
+        response = text_vision_model.generate_content(search_prompt)
+        return json.loads(clean_text(response.text))
+    except Exception as e:
+        print(f"Location search with Gemini failed: {e}")
+        return None
+
+def search_nearby_with_gemini(latitude, longitude):
+    if not text_vision_model: return None
+    try:
+        search_prompt = f"""
+        你是一個專業的在地嚮導。請根據使用者提供的經緯度，找出離他最近的 5 間餐廳。
+        你的回覆必須是一個 JSON 陣列，陣列中的每個物件都必須包含 "name", "address", "phone_number", 和 "map_url"。
+        如果找不到電話，"phone_number" 的值必須是 "無提供電話"。
+        請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
+        使用者位置：緯度 {latitude}, 經度 {longitude}
+        """
+        response = text_vision_model.generate_content(search_prompt)
+        return json.loads(clean_text(response.text))
+    except Exception as e:
+        print(f"Nearby search failed: {e}")
+        return None
+
+def create_location_carousel(places_list, reply_token, user_id, line_bot_api):
+    if not places_list:
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，在您附近找不到符合條件的地點。")]))
+        return
+    
+    columns = []
+    for place in places_list[:10]: # 最多顯示10個
+        place_name = place.get("name")
+        place_address = place.get("address")
+        phone_number = place.get("phone_number", "無提供電話")
+        map_url = place.get("map_url")
+        
+        if not all([place_name, place_address, map_url]):
+            continue
+
+        display_text = f"{place_address}\n電話：{phone_number}"
+        
+        column = CarouselColumn(
+            title=place_name,
+            text=display_text[:60], # LINE 的 text 欄位有長度限制
+            actions=[URIAction(label='在地圖上打開', uri=map_url)]
+        )
+        columns.append(column)
+
+    if columns:
+        template_message = TemplateMessage(alt_text='為您找到推薦地點！', template=CarouselTemplate(columns=columns))
+        # 由於搜尋可能是由 push 觸發，我們統一用 push 回覆
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[template_message]))
+    else:
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，找不到符合條件的地點資訊。")]))
+
+# --- 核心邏輯 ---
 @app.route("/")
 def home():
-    return "AI Bot (with Enhanced Location Search) is Running!"
+    return "AI Bot (Graduation Version) is Running!"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -115,15 +196,17 @@ def handle_text_message(event):
     user_id = event.source.user_id
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
-    
+
     if not text_vision_model:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="Gemini AI 功能未啟用。")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="Gemini AI 功能未啟用或設定錯誤。")]))
         return
 
+    # 指令處理
     if user_message.startswith("畫"):
         prompt_chinese = user_message.split("畫", 1)[1].strip()
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"好的，收到繪圖指令：「{prompt_chinese}」。\n正在翻譯並生成圖片...")]))
         prompt_english = translate_prompt_for_drawing(prompt_chinese)
+        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"翻譯完成，專業指令為：「{prompt_english}」。\n正在請 Imagen 3 模型繪製...")]))
         image_data, gen_status = generate_image_with_vertex_ai(prompt_english)
         if image_data:
             image_url, upload_status = upload_image_to_cloudinary(image_data)
@@ -137,91 +220,57 @@ def handle_text_message(event):
 
     elif user_message.startswith(("搜尋", "尋找")):
         query = user_message.replace("搜尋", "").replace("尋找", "").strip()
-        reply_message_obj = []
         if not query:
-            reply_message_obj.append(TextMessage(text="請告訴我要搜尋什麼店家或地址喔！"))
-        else:
-            search_prompt = f"""
-            你是一個專業的地點搜尋與資料整理助理。請根據使用者提供的關鍵字，找出最相關的一個地點。
-            你的回覆必須是一個 JSON 物件，其中包含四個鍵：
-            1. "name": 地點的官方名稱。
-            2. "address": 該地點的完整地址。
-            3. "phone_number": 該地點的聯絡電話。如果找不到電話，這個鍵的值必須是字串 "無提供電話"。
-            4. "map_url": 該地點的 Google Maps 搜尋連結。
+            line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請告訴我要搜尋什麼店家或地址喔！")]))
+            return
             
-            請嚴格遵守 JSON 格式，不要回覆任何多餘的文字或解釋。
-            使用者查詢的關鍵字是：「{query}」
-            """
-            try:
-                response = text_vision_model.generate_content(search_prompt)
-                cleaned_json_str = re.sub(r'```json\n|```', '', response.text).strip()
-                result_json = json.loads(cleaned_json_str)
-                
-                place_name = result_json.get("name")
-                place_address = result_json.get("address")
-                phone_number = result_json.get("phone_number", "無提供電話")
-                map_url = result_json.get("map_url")
+        if "附近" in query:
+            line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="好的，要搜尋您附近的地點，請點擊左下角的「+」按鈕，然後選擇「位置資訊」並分享您的位置給我喔！")]))
+            return
 
-                if not all([place_name, place_address, map_url]):
-                    raise ValueError("AI 回傳的 JSON 格式不完整。")
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到！正在為您搜尋「{query}」...")]))
+        places = search_location_with_gemini(query)
+        # 因為搜尋可能需要時間，所以用 push API 回覆
+        create_location_carousel([places] if places else [], "placeholder", user_id, line_bot_api)
+        return
 
-                display_text = f"{place_address}\n電話：{phone_number}"
-
-                template_message = TemplateMessage(
-                    alt_text=f'為您找到「{place_name}」',
-                    template=CarouselTemplate(
-                        columns=[
-                            CarouselColumn(
-                                title=place_name,
-                                text=display_text,
-                                actions=[URIAction(label='在 Google Maps 上打開', uri=map_url)]
-                            )
-                        ]
-                    )
-                )
-                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[template_message]))
-                return
-            except Exception as e:
-                print(f"Location search failed: {e}")
-                reply_message_obj.append(TextMessage(text=f"抱歉，搜尋「{query}」時發生錯誤，可能找不到該地點或 AI 回傳格式有誤。"))
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
-
-    else: # 一般聊天或記憶功能
-        reply_message_obj = []
-        if user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
-            if redis_client: redis_client.delete(f"chat_history_{user_id}")
-            reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
-        else:
-            history_data = []
-            if redis_client:
-                history_data_json = redis_client.get(f"chat_history_{user_id}")
-                if history_data_json: history_data = json.loads(history_data_json)
-            
-            reconstructed_history = []
-            if history_data:
-                for msg in history_data:
-                    role = msg.get("role")
-                    parts_list = []
-                    raw_parts = msg.get("parts", [])
-                    if isinstance(raw_parts, list):
-                        for p in raw_parts:
-                            if isinstance(p, dict):
-                                parts_list.append(Part.from_text(p.get("text", "")))
-                            elif isinstance(p, str):
-                                parts_list.append(Part.from_text(p))
-                    if role and parts_list:
-                        reconstructed_history.append(Content(role=role, parts=parts_list))
-
-            chat_session = text_vision_model.start_chat(history=reconstructed_history)
-            response = chat_session.send_message(user_message)
-            cleaned_text = clean_text(response.text)
-            reply_message_obj.append(TextMessage(text=cleaned_text))
-            
-            updated_history = [{"role": c.role, "parts": [{"text": p.text} for p in c.parts]} for c in chat_session.history]
-            if redis_client:
-                redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200)
+    # 一般對話或記憶功能
+    reply_message_obj = []
+    if user_message.lower() in ["清除對話", "忘記對話", "清除記憶"]:
+        if redis_client: redis_client.delete(f"chat_history_{user_id}")
+        reply_message_obj.append(TextMessage(text="好的，我已經將我們先前的對話紀錄都忘記了。"))
+    else:
+        history_data = []
+        if redis_client:
+            history_data_json = redis_client.get(f"chat_history_{user_id}")
+            if history_data_json: history_data = json.loads(history_data_json)
         
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
+        reconstructed_history = []
+        if history_data:
+            for msg in history_data:
+                role = msg.get("role")
+                # 向下相容，處理舊格式 (parts: ["text"]) 和新格式 (parts: [{"text": "text"}])
+                parts_list = []
+                raw_parts = msg.get("parts", [])
+                if isinstance(raw_parts, list):
+                    for p in raw_parts:
+                        if isinstance(p, dict):
+                            parts_list.append(Part.from_text(p.get("text", "")))
+                        elif isinstance(p, str):
+                            parts_list.append(Part.from_text(p))
+                if role and parts_list:
+                    reconstructed_history.append(Content(role=role, parts=parts_list))
+
+        chat_session = text_vision_model.start_chat(history=reconstructed_history)
+        response = chat_session.send_message(user_message)
+        cleaned_text = clean_text(response.text)
+        reply_message_obj.append(TextMessage(text=cleaned_text))
+        
+        updated_history = [{"role": c.role, "parts": [{"text": p.text}]} for c in chat_session.history]
+        if redis_client:
+            redis_client.set(f"chat_history_{user_id}", json.dumps(updated_history), ex=7200)
+    
+    line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=reply_message_obj))
 
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
@@ -231,7 +280,7 @@ def handle_image_message(event):
     api_client = ApiClient(configuration)
     line_bot_api = MessagingApi(api_client)
     try:
-        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini Flash 進行分析...")]))
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了，正在請 Gemini 2.5 Flash 進行分析...")]))
         line_bot_blob_api = MessagingApiBlob(api_client)
         message_content = line_bot_blob_api.get_message_content(message_id)
         image_part = Part.from_data(data=message_content, mime_type="image/jpeg")
@@ -245,6 +294,25 @@ def handle_image_message(event):
     except Exception as e:
         print(f"Handle Image Message Error: {e}")
 
+@handler.add(MessageEvent, message=LocationMessageContent)
+def handle_location_message(event):
+    reply_token = event.reply_token
+    user_id = event.source.user_id
+    latitude = event.message.latitude
+    longitude = event.message.longitude
+    api_client = ApiClient(configuration)
+    line_bot_api = MessagingApi(api_client)
+
+    line_bot_api.reply_message_with_http_info(
+        ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=f"收到您的位置！正在搜尋緯度 {latitude:.4f}, 經度 {longitude:.4f} 附近的餐廳...")]
+        )
+    )
+    places = search_nearby_with_gemini(latitude, longitude)
+    create_location_carousel(places, "placeholder", user_id, line_bot_api)
+
+# --- 啟動伺服器 ---
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 10000))
