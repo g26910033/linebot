@@ -15,16 +15,24 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageCo
 from services.ai_service import AIService
 from services.web_service import WebService
 from services.storage_service import StorageService
+from services.utility_service import UtilityService
+from services.weather_service import WeatherService
+from services.news_service import NewsService
+from services.calendar_service import CalendarService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class MessageHandler:
     """訊息處理器基類。"""
-    def __init__(self, ai_service: AIService, storage_service: StorageService, web_service: WebService = None) -> None:
+    def __init__(self, ai_service: AIService, storage_service: StorageService, web_service: WebService = None, utility_service: UtilityService = None, weather_service: WeatherService = None, news_service: NewsService = None, calendar_service: CalendarService = None) -> None:
         self.ai_service = ai_service
         self.storage_service = storage_service
         self.web_service = web_service
+        self.utility_service = utility_service
+        self.weather_service = weather_service
+        self.news_service = news_service
+        self.calendar_service = calendar_service
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
         try:
@@ -87,6 +95,45 @@ class TextMessageHandler(MessageHandler):
         logger.info(f"Received text message from user {user_id}: '{user_message}'")
 
         try:
+            # 檢查是否為單位換算指令
+            if self.utility_service:
+                conversion_result = self.utility_service.parse_and_convert(user_message)
+                if conversion_result:
+                    logger.debug(f"User {user_id} triggered unit conversion.")
+                    self._reply_error(line_bot_api, reply_token, conversion_result)
+                    return
+
+            # 檢查是否為天氣查詢指令
+            if self.weather_service and self._is_weather_command(user_message):
+                city = user_message.replace("天氣", "").strip()
+                if city:
+                    logger.debug(f"User {user_id} triggered weather command for city: {city}")
+                    weather_result = self.weather_service.get_weather(city)
+                    self._reply_error(line_bot_api, reply_token, weather_result)
+                    return
+                else:
+                    self._reply_error(line_bot_api, reply_token, "請告訴我想查詢哪個城市的天氣喔！\n格式：`台北天氣`")
+                    return
+
+            # 檢查是否為新聞查詢指令
+            if self.news_service and self._is_news_command(user_message):
+                logger.debug(f"User {user_id} triggered news command.")
+                news_result = self.news_service.get_top_headlines()
+                self._reply_error(line_bot_api, reply_token, news_result)
+                return
+
+            # 檢查是否為翻譯指令
+            if self._is_translation_command(user_message):
+                logger.debug(f"User {user_id} triggered translation command.")
+                self._handle_translation(user_message, reply_token, line_bot_api)
+                return
+
+            # 檢查是否為日曆指令
+            if self.calendar_service and self._is_calendar_command(user_message):
+                logger.debug(f"User {user_id} triggered calendar command.")
+                self._handle_calendar_command(user_message, reply_token, line_bot_api)
+                return
+
             if self._is_draw_command(user_message):
                 logger.debug(f"User {user_id} triggered draw command.")
                 prompt = user_message.replace("畫", "", 1).strip()
@@ -140,6 +187,56 @@ class TextMessageHandler(MessageHandler):
 
     def _is_url_message(self, text: str) -> bool:
         return self._URL_PATTERN.match(text) is not None
+
+    def _is_weather_command(self, text: str) -> bool:
+        return text.endswith("天氣")
+
+    def _is_news_command(self, text: str) -> bool:
+        return text in ["新聞", "頭條", "頭條新聞", "最新新聞"]
+
+    def _is_translation_command(self, text: str) -> bool:
+        return text.lower().startswith("翻譯")
+
+    def _is_calendar_command(self, text: str) -> bool:
+        return text.lower().startswith(("提醒我", "新增日曆", "新增行程"))
+
+    def _handle_calendar_command(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        # 讓 AI 解析文字
+        event_data = self.ai_service.parse_event_from_text(user_message)
+
+        if not event_data or not event_data.get('title'):
+            self._reply_error(line_bot_api, reply_token, "抱歉，我無法理解您的行程安排，可以說得更清楚一點嗎？")
+            return
+
+        # 產生 Google 日曆連結
+        calendar_link = self.calendar_service.create_google_calendar_link(event_data)
+
+        if not calendar_link:
+            self._reply_error(line_bot_api, reply_token, "抱歉，處理您的日曆請求時發生錯誤。")
+            return
+        
+        reply_text = (
+            f"好的，我為您準備好日曆連結了！\n\n"
+            f"標題：{event_data.get('title')}\n"
+            f"時間：{event_data.get('start_time')}\n\n"
+            f"請點擊下方連結將它加入您的 Google 日曆：\n{calendar_link}"
+        )
+        self._reply_error(line_bot_api, reply_token, reply_text)
+
+    def _handle_translation(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        # 使用正則表達式解析指令，例如 "翻譯 你好 到 英文"
+        match = re.match(r'翻譯\s+(.+?)\s+(?:到|成)\s+(.+)', user_message, re.IGNORECASE)
+        if not match:
+            self._reply_error(line_bot_api, reply_token, "翻譯指令格式不正確喔！\n請使用：`翻譯 [要翻譯的文字] 到 [目標語言]`\n例如：`翻譯 你好到英文`")
+            return
+
+        text_to_translate, target_language = match.groups()
+        
+        # 進行翻譯
+        translated_text = self.ai_service.translate_text(text_to_translate.strip(), target_language.strip())
+        
+        # 回覆結果
+        self._reply_error(line_bot_api, reply_token, translated_text)
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         def task():

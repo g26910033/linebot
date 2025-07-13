@@ -4,6 +4,8 @@ AI 服務模組
 """
 import re
 import json
+import pytz
+from datetime import datetime
 from config.settings import AppConfig
 from utils.logger import get_logger
 
@@ -173,4 +175,63 @@ class AIService:
             return None
         except Exception as e:
             logger.error(f"An unexpected error occurred during location search for query '{query}': {e}", exc_info=True)
+            return None
+
+    def translate_text(self, text: str, target_language: str) -> str:
+        """
+        使用 AI 模型翻譯文字。
+        """
+        if not self.is_available():
+            return "翻譯服務未啟用。"
+        
+        prompt = f"""
+        Please act as a professional translator.
+        Translate the following text into {target_language}.
+        Return only the translated text, without any additional explanations or markdown.
+        Text to translate: "{text}"
+        """
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            return self.clean_text(response.text)
+        except Exception as e:
+            logger.error(f"Error during translation: {e}", exc_info=True)
+            return "抱歉，翻譯時發生錯誤。"
+
+    def parse_event_from_text(self, text: str) -> dict | None:
+        """
+        從自然語言中解析出事件的標題、開始時間和結束時間。
+        """
+        if not self.is_available():
+            return None
+
+        # 獲取當前時間並格式化，作為 AI 的參考基準
+        tw_tz = pytz.timezone('Asia/Taipei')
+        current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
+
+        prompt = f"""
+        你是一個聰明的行程安排助理。請從以下使用者輸入的文字中，解析出日曆事件的資訊。
+        目前的台灣時間是：{current_time}。
+
+        你的任務是提取三項資訊：
+        1.  `title`: 事件的標題。
+        2.  `start_time`: 事件的開始時間，格式為 `YYYY-MM-DDTHH:MM:SS`。
+        3.  `end_time`: 事件的結束時間，格式為 `YYYY-MM-DDTHH:MM:SS`。
+
+        解析規則：
+        -   如果使用者沒有提到具體的結束時間，請將結束時間設定為開始時間的一小時後。
+        -   如果使用者只提到日期而沒有時間（例如「明天」），請將開始時間設定為該日期的早上 9 點。
+        -   能夠理解相對時間，例如「明天」、「後天」、「下週三」、「三小時後」。
+        -   如果無法解析出有效的時間，`start_time` 和 `end_time` 應為 null。
+        -   你的回應必須是純粹的 JSON 格式，不包含任何其他文字或 markdown 符號。
+
+        使用者輸入: "{text}"
+
+        JSON 輸出:
+        """
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            cleaned_response = self.clean_text(response.text)
+            return json.loads(cleaned_response)
+        except Exception as e:
+            logger.error(f"Error parsing event from text: {e}", exc_info=True)
             return None

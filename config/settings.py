@@ -55,6 +55,10 @@ class AppConfig:
     cloudinary_cloud_name: str
     cloudinary_api_key: str
     cloudinary_api_secret: str
+    # OpenWeatherMap API Key
+    openweather_api_key: str
+    # NewsAPI.org API Key
+    news_api_key: str
     # 有預設值的參數
     gcp_location: str = "us-central1"
     redis_url: Optional[str] = None

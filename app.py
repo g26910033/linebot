@@ -19,6 +19,10 @@ from handlers.message_handlers import TextMessageHandler, ImageMessageHandler, L
 from services.ai_service import AIService
 from services.web_service import WebService
 from services.storage_service import StorageService
+from services.utility_service import UtilityService
+from services.weather_service import WeatherService
+from services.news_service import NewsService
+from services.calendar_service import CalendarService
 from utils.logger import get_logger, setup_root_logger
 
 # 引入 Vertex AI 初始化工具
@@ -51,7 +55,11 @@ class LineBotApp:
         self.ai_service = AIService(self.config)
         self.storage_service = StorageService(self.config)
         self.web_service = WebService()
-        logger.debug("AI and Storage Services initialized.")
+        self.utility_service = UtilityService()
+        self.weather_service = WeatherService(self.config.openweather_api_key)
+        self.news_service = NewsService(self.config.news_api_key)
+        self.calendar_service = CalendarService()
+        logger.debug("AI, Storage, Web, Utility, Weather, News, and Calendar Services initialized.")
 
         # 初始化 LINE Bot API 客戶端
         self.configuration = Configuration(access_token=self.config.line_channel_access_token)
@@ -60,7 +68,15 @@ class LineBotApp:
         logger.debug("LINE Bot API client initialized.")
 
         # 初始化訊息處理器和 Webhook
-        self.text_handler = TextMessageHandler(self.ai_service, self.storage_service, self.web_service)
+        self.text_handler = TextMessageHandler(
+            ai_service=self.ai_service,
+            storage_service=self.storage_service,
+            web_service=self.web_service,
+            utility_service=self.utility_service,
+            weather_service=self.weather_service,
+            news_service=self.news_service,
+            calendar_service=self.calendar_service
+        )
         self.image_handler = ImageMessageHandler(self.ai_service, self.storage_service)
         self.location_handler = LocationMessageHandler(self.ai_service, self.storage_service)
         self.handler = WebhookHandler(self.config.line_channel_secret)
