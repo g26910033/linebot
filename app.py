@@ -79,6 +79,11 @@ class LineBotApp:
         )
         self.image_handler = ImageMessageHandler(self.ai_service, self.storage_service)
         self.location_handler = LocationMessageHandler(self.ai_service, self.storage_service)
+
+        # 將 access token 傳遞給處理器以使用 loading animation
+        self.text_handler.line_channel_access_token = self.config.line_channel_access_token
+        self.image_handler.line_channel_access_token = self.config.line_channel_access_token
+        self.location_handler.line_channel_access_token = self.config.line_channel_access_token
         self.handler = WebhookHandler(self.config.line_channel_secret)
         logger.debug("Message handlers and Webhook handler initialized.")
         

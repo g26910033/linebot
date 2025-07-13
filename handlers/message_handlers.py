@@ -4,6 +4,7 @@
 """
 import threading
 import re
+import requests
 from urllib.parse import quote_plus
 from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
@@ -33,6 +34,29 @@ class MessageHandler:
         self.weather_service = weather_service
         self.news_service = news_service
         self.calendar_service = calendar_service
+        self.line_channel_access_token = None # 稍後在 app.py 中設定
+
+    def _show_loading_animation(self, user_id: str, seconds: int = 10):
+        """顯示 LINE 的載入中動畫"""
+        if not self.line_channel_access_token:
+            logger.warning("LINE Channel Access Token not set. Skipping loading animation.")
+            return
+
+        url = "https://api.line.me/v2/bot/chat/loading/start"
+        headers = {
+            "Authorization": f"Bearer {self.line_channel_access_token}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "chatId": user_id,
+            "loadingSeconds": seconds
+        }
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=5)
+            if response.status_code != 202:
+                logger.error(f"Failed to show loading animation. Status: {response.status_code}, Body: {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Exception when showing loading animation: {e}")
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
         try:
@@ -134,6 +158,12 @@ class TextMessageHandler(MessageHandler):
                 self._handle_calendar_command(user_message, reply_token, line_bot_api)
                 return
 
+            # 檢查是否為功能說明指令
+            if self._is_help_command(user_message):
+                logger.debug(f"User {user_id} triggered help command.")
+                self._handle_help(reply_token, line_bot_api)
+                return
+
             if self._is_draw_command(user_message):
                 logger.debug(f"User {user_id} triggered draw command.")
                 prompt = user_message.replace("畫", "", 1).strip()
@@ -198,7 +228,55 @@ class TextMessageHandler(MessageHandler):
         return text.lower().startswith("翻譯")
 
     def _is_calendar_command(self, text: str) -> bool:
-        return text.lower().startswith(("提醒我", "新增日曆", "新增行程"))
+        # 放寬判斷條件，檢查是否包含關鍵字
+        keywords = ["提醒我", "新增日曆", "新增行程", "的日曆"]
+        return any(keyword in text.lower() for keyword in keywords)
+
+    def _is_help_command(self, text: str) -> bool:
+        return text in ["功能說明", "help", "幫助", "指令"]
+
+    def _handle_help(self, reply_token: str, line_bot_api: MessagingApi) -> None:
+        help_text = """
+您好！這是一個功能強大的 AI 助理，您可以這樣使用我：
+
+🤖【AI 對話】
+直接輸入任何文字，開始與我對話。
+
+🎨【AI 繪圖】
+開頭說「畫」，例如：
+`畫一隻在月球上喝茶的貓`
+
+🖼️【圖片分析】
+直接傳送任何圖片給我。
+
+📍【地點搜尋】
+- `搜尋 台北101`
+- `尋找附近的咖啡廳` (需分享位置)
+
+🌦️【天氣查詢】
+- `台北天氣`
+
+📰【新聞頭條】
+- `新聞` 或 `頭條`
+
+💱【單位/匯率換算】
+- `100公分等於幾公尺`
+- `50 USD to TWD`
+
+📅【新增日曆行程】
+- `提醒我明天下午3點開會`
+- `新增日曆下週五去看電影`
+
+🌐【網頁文章摘要】
+直接貼上網址連結。
+
+🗣️【多語言翻譯】
+- `翻譯 你好到英文`
+
+🧹【清除對話紀錄】
+- `清除對話`
+        """
+        self._reply_error(line_bot_api, reply_token, help_text.strip())
 
     def _handle_calendar_command(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         # 讓 AI 解析文字
@@ -239,6 +317,7 @@ class TextMessageHandler(MessageHandler):
         self._reply_error(line_bot_api, reply_token, translated_text)
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        self._show_loading_animation(user_id)
         def task():
             """在背景執行緒中處理耗時的 AI 對話任務"""
             try:
@@ -265,6 +344,8 @@ class TextMessageHandler(MessageHandler):
         if not prompt:
             self._reply_error(line_bot_api, reply_token, "請告訴我要畫什麼喔！\n格式：`畫 一隻可愛的貓`")
             return
+        
+        self._show_loading_animation(user_id, seconds=30) # 繪圖可能需要更長時間
 
         def task():
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")]))
@@ -388,6 +469,8 @@ class ImageMessageHandler(MessageHandler):
         reply_token = event.reply_token
         message_id = event.message.id
         logger.info(f"Received image message from user {user_id}, message_id: {message_id}")
+        
+        self._show_loading_animation(user_id)
 
         def task():
             """在背景執行緒中處理耗時的圖片分析任務"""
