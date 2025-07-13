@@ -88,87 +88,44 @@ class AppConfig:
 
 
 def load_config() -> AppConfig:
-    """載入應用程式配置"""
+    """從環境變數動態載入應用程式配置，並進行驗證。"""
     try:
-        # Pre-map dataclass fields for efficient lookup
-        app_config_fields = {f.name: f for f in fields(AppConfig)}
+        kwargs = {}
+        # 遍歷 AppConfig 的所有欄位來動態載入配置
+        for field in fields(AppConfig):
+            # gcp_project_id 是特殊情況，它從 gcp_service_account_json 衍生而來
+            if field.name == "gcp_project_id":
+                continue
 
-        # Create a dictionary to hold the loaded config values
-        # This allows us to use dataclass.__init__(**kwargs) at the end
-        loaded_values = {}
+            # 確定環境變數的鍵名和預設值
+            env_key = field.name.upper()
+            has_default = field.default is not MISSING or field.default_factory is not MISSING
+            
+            # 使用輔助函數獲取並驗證值
+            kwargs[field.name] = _get_config_value(
+                key=env_key,
+                target_type=field.type,
+                default=field.default if has_default else None,
+                required=not has_default
+            )
 
-        # Helper to get value for a specific field, considering its dataclass default
-        def _get_field_env_value(field_name: str):
-            field_obj: Field = app_config_fields.get(field_name)
-            if not field_obj:
-                raise AttributeError(f"Field '{field_name}' not found in AppConfig.")
-
-            env_var_key = field_name.upper()
-
-            # Determine if the field has a default value in the dataclass
-            has_default = field_obj.default is not MISSING or field_obj.default_factory is not MISSING
-            default_value = field_obj.default if has_default else None
-            required = not has_default
-
-            try:
-                # Call the common helper to get the value from environment
-                return _get_config_value(
-                    env_var_key, target_type=field_obj.type, default=default_value, required=required
-                )
-            except ValueError as e:
-                # Add context to the error message for easier debugging
-                raise ValueError(
-                    f"Failed to load environment variable '{env_var_key}' for field '{field_name}': {e}"
-                ) from e
-
-        # LINE Bot 設定
-        loaded_values["line_channel_secret"] = _get_field_env_value("line_channel_secret")
-        loaded_values["line_channel_access_token"] = _get_field_env_value("line_channel_access_token")
-
-        # GCP 設定 (special handling for project_id derived from JSON)
-        # GCP_SERVICE_ACCOUNT_JSON is required and does not have a default in AppConfig
-        gcp_service_account_json_str = _get_field_env_value("gcp_service_account_json")
+        # 特殊處理：從服務帳號 JSON 中解析 project_id
+        gcp_json_str = kwargs.get("gcp_service_account_json")
+        if not gcp_json_str:
+            # 如果 gcp_service_account_json 是必需的，_get_config_value 應該已經拋出錯誤
+            # 但為了代碼清晰，這裡可以再次確認
+            raise ValueError("GCP_SERVICE_ACCOUNT_JSON is required but was not loaded.")
+        
         try:
-            gcp_info = json.loads(gcp_service_account_json_str)
-        except json.JSONDecodeError:
-            raise ValueError(
-                f"GCP_SERVICE_ACCOUNT_JSON is not a valid JSON string. Raw value starts with: '
-                {gcp_service_account_json_str[:50]}...'
-            ")
+            gcp_info = json.loads(gcp_json_str)
+            project_id = gcp_info.get("project_id")
+            if not project_id:
+                raise ValueError("'project_id' not found in GCP_SERVICE_ACCOUNT_JSON.")
+            kwargs["gcp_project_id"] = project_id
+        except json.JSONDecodeError as e:
+            raise ValueError(f"GCP_SERVICE_ACCOUNT_JSON is not valid JSON. Error: {e}") from e
 
-        gcp_project_id = gcp_info.get("project_id")
-        if not gcp_project_id:
-            raise ValueError("'project_id' is missing or empty in parsed GCP_SERVICE_ACCOUNT_JSON.")
-        
-        loaded_values["gcp_service_account_json"] = gcp_service_account_json_str
-        loaded_values["gcp_project_id"] = gcp_project_id
-        
-        # GCP_LOCATION has a default in AppConfig, so it's not strictly required in ENV
-        loaded_values["gcp_location"] = _get_field_env_value("gcp_location")
-
-        # Cloudinary 設定
-        loaded_values["cloudinary_cloud_name"] = _get_field_env_value("cloudinary_cloud_name")
-        loaded_values["cloudinary_api_key"] = _get_field_env_value("cloudinary_api_key")
-        loaded_values["cloudinary_api_secret"] = _get_field_env_value("cloudinary_api_secret")
-
-        # Redis 設定 (Optional, has default of None in AppConfig)
-        loaded_values["redis_url"] = _get_field_env_value("redis_url")
-
-        # 應用程式設定 (have defaults in AppConfig)
-        loaded_values["port"] = _get_field_env_value("port")
-        loaded_values["debug"] = _get_field_env_value("debug")
-
-        # AI 模型設定 (have defaults in AppConfig)
-        loaded_values["text_model_name"] = _get_field_env_value("text_model_name")
-        loaded_values["image_model_name"] = _get_field_env_value("image_model_name")
-        
-        # The remaining fields (chat_history_ttl, nearby_query_ttl, max_search_results, search_radius_km)
-        # are not explicitly loaded from environment variables in the original logic.
-        # They rely solely on their default values defined in the AppConfig dataclass.
-        # Therefore, they are not added to 'loaded_values' and will automatically take their defaults
-        # when the AppConfig instance is created.
-
-        return AppConfig(**loaded_values)
+        return AppConfig(**kwargs)
 
     except ValueError as e:
         # Catch specific ValueErrors that indicate configuration issues
