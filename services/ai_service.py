@@ -11,8 +11,8 @@ from utils.logger import get_logger
 
 # 引入所有需要的 Vertex AI 工具
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part, Content
-from vertexai.preview.vision_models import Image, ImageGenerationModel, HarmCategory, HarmBlockThreshold
+from vertexai.generative_models import GenerativeModel, Part, Content, HarmCategory, HarmBlockThreshold
+from vertexai.preview.vision_models import Image, ImageGenerationModel
 
 logger = get_logger(__name__)
 
@@ -139,7 +139,6 @@ class AIService:
             translated_prompt = self.translate_prompt_for_drawing(prompt)
             
             # 引入安全設定，嘗試降低被阻擋的機率
-            from vertexai.preview.vision_models import HarmCategory, HarmBlockThreshold
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_UNSPECIFIED: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
