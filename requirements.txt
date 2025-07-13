@@ -1,0 +1,9 @@
+Pillow
+cloudinary
+flask
+google-cloud-aiplatform
+gunicorn
+line-bot-sdk
+redis
+waitress
+python-dotenv

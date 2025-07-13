@@ -1,0 +1,66 @@
+# 排除不必要的檔案以加速部署
+__pycache__/
+*.egg
+*.egg-info/
+*.py[cod]
+*.so
+*$py.class
+.Python
+.eggs/
+.installed.cfg
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+
+# 開發工具
+.cache
+.coverage
+.hypothesis/
+.pytest_cache/
+.tox/
+*.cover
+coverage.xml
+nosetests.xml
+
+# IDE
+.idea/
+.vscode/
+*~
+*.swo
+*.swp
+
+# 環境檔案
+.env
+.env.development
+.env.local
+.env.production
+.env.test
+
+# 日誌檔案
+*.log
+
+# 暫存檔案
+.DS_Store
+Thumbs.db
+
+# 測試檔案
+*_test.py
+test_*.py
+tests/
+
+# 文檔
+docs/
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore

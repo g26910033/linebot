@@ -1,0 +1,46 @@
+
+services:
+  - type: web
+    name: ai-linebot
+    runtime: python
+    plan: starter  # 可選 standard/pro，依流量與資源需求調整
+    autoDeploy: true
+    buildCommand: |
+      pip install --upgrade pip
+      pip install --no-cache-dir wheel setuptools
+      pip install --no-cache-dir -r requirements.txt
+    startCommand: >
+      gunicorn main:app \
+        --bind 0.0.0.0:$PORT \
+        --workers 2 \
+        --timeout 120 \
+        --keep-alive 2 \
+        --max-requests 1000 \
+        --max-requests-jitter 100
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: PIP_NO_CACHE_DIR
+        value: 1
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: PYTHONDONTWRITEBYTECODE
+        value: 1
+      # 建議於 Render 控制台設定下列敏感資訊：
+      # - LINE_CHANNEL_SECRET
+      # - LINE_CHANNEL_ACCESS_TOKEN
+      # - GCP_SERVICE_ACCOUNT_JSON
+      # - CLOUDINARY_CLOUD_NAME
+      # - CLOUDINARY_API_KEY
+      # - CLOUDINARY_API_SECRET
+      # - REDIS_URL
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+
+  # Redis 服務（可選，若不使用外部 Redis）
+  - type: redis
+    ipAllowList: []  # 允許所有 IP 存取，或填入特定 IP
+    name: ai-linebot-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
