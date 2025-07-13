@@ -20,7 +20,6 @@ class StorageService:
     儲存服務類別，封裝 Redis 快取與 Cloudinary 圖片上傳。
     支援對話歷史、附近查詢、圖片上傳等功能。
     """
-    MAX_CHAT_HISTORY_LENGTH: int = 20
     _CHAT_HISTORY_PREFIX: str = "chat_history_"
     _NEARBY_QUERY_PREFIX: str = "nearby_query_"
     _CLOUDINARY_FOLDER: str = "linebot_images"
@@ -131,8 +130,8 @@ class StorageService:
         if not self.is_redis_available():
             return False
         try:
-            if len(history) > self.MAX_CHAT_HISTORY_LENGTH:
-                history = history[-self.MAX_CHAT_HISTORY_LENGTH:]
+            if len(history) > self.config.max_chat_history_length:
+                history = history[-self.config.max_chat_history_length:]
             self.redis_client.set(
                 f"{self._CHAT_HISTORY_PREFIX}{user_id}",
                 json.dumps(history),

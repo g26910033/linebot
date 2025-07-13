@@ -80,7 +80,12 @@ class AIService:
             return "圖片分析功能未啟用。"
         
         image_part = Part.from_data(data=image_data, mime_type="image/jpeg")
-        prompt = "請用繁體中文，詳細描述這張圖片的內容。"
+        prompt = """你是一位專業的圖片分析師。請用繁體中文，生動且詳細地描述這張圖片的內容。
+你的分析應包含以下幾點：
+1.  **主要物件與場景**：圖片中最顯眼的是什麼？發生了什麼事？
+2.  **構圖與氛圍**：圖片的構圖如何？給人什麼樣的感覺或情緒？
+3.  **文字識別**：如果圖片中有清晰可辨的文字，請將其完整列出。如果沒有，請忽略此點。
+請將你的分析整理成一段流暢的描述。"""
         response = self.text_vision_model.generate_content([image_part, prompt])
         return self.clean_text(response.text)
 

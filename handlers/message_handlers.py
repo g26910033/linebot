@@ -35,7 +35,7 @@ class MessageHandler:
         except Exception as e:
             logger.error(f"Exception when sending reply message: {e}", exc_info=True)
 
-    def _create_location_carousel(self, places_list, line_bot_api, user_id):
+    def _create_location_carousel(self, places_list: list) -> TemplateMessage | TextMessage:
         """根據地點列表建立輪播訊息"""
         columns = []
         # 限制輪播項目數量，最多10個
@@ -180,7 +180,7 @@ class TextMessageHandler(MessageHandler):
                 try:
                     places = self.ai_service.search_location(query)
                     if places and places.get("places"):
-                        carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
+                        carousel = self._create_location_carousel(places["places"])
                         line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
                     else:
                         line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，找不到關於「{query}」的地點資訊。")]))
@@ -253,7 +253,7 @@ class LocationMessageHandler(MessageHandler):
             try:
                 places = self.ai_service.search_location(query=pending_query, is_nearby=True, latitude=latitude, longitude=longitude)
                 if places and places.get("places"):
-                    carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
+                    carousel = self._create_location_carousel(places["places"])
                     line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
                 else:
                     line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，在您附近找不到「{pending_query}」的相關地點。")]))

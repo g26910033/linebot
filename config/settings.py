@@ -63,6 +63,7 @@ class AppConfig:
     text_model_name: str = "gemini-2.5-flash"
     image_model_name: str = "imagen-3.0-generate-002" # 注意：這應為 imagen-3.0-generate-002 等具體模型
     chat_history_ttl: int = 7200
+    max_chat_history_length: int = 20
     nearby_query_ttl: int = 300
     max_search_results: int = 5
     search_radius_km: int = 2
