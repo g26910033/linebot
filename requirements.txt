@@ -1,21 +1,8 @@
-# LINE Bot SDK
-line-bot-sdk==3.12.0
-
-# Web Framework
-flask==3.0.0
-
-# Google Cloud AI Platform
-google-cloud-aiplatform==1.42.1
-
-# Image Processing and Storage
-cloudinary==1.40.0
-Pillow==10.4.0
-
-# Database and Caching
-redis==5.0.1
-
-# Production Server
-gunicorn==21.2.0
-
-# HTTP requests - 讓 line-bot-sdk 決定版本
-requests>=2.32.3
+line-bot-sdk-python
+flask
+google-cloud-aiplatform
+cloudinary
+Pillow
+gunicorn
+waitress
+redis

@@ -1,33 +1,47 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# vsc_agent.py: An interactive agent for code modification in VS Code.
-# This script is designed to be run in the integrated terminal of Visual Studio Code on macOS.
-# Recommended execution: python3 vsc_agent.py
+# vsc_agent_pro.py: A project-aware agent for multi-file, conversational coding in VS Code.
+# This version communicates directly with the Vertex AI API instead of shelling out to a CLI.
 
-import subprocess
 import os
 import sys
 import datetime
 import difflib
+import json
+from pathlib import Path
 
-# --- Helper Functions ---
+# 引入 Vertex AI 函式庫
+import vertexai
+from vertexai.preview.generative_models import GenerativeModel, Part
+from google.oauth2 import service_account
+
+# --- Helper Functions (無需修改) ---
 
 def print_color(text, color_code):
     """Prints text in a specified color."""
     print(f"\033[{color_code}m{text}\033[0m")
 
-def run_command(command):
-    """Runs a shell command and returns its output or raises an error."""
-    result = subprocess.run(command, capture_output=True, text=True, shell=True)
-    if result.returncode != 0:
-        print_color(f"❌ 命令執行失敗: {command}", "31")
-        print_color(f"錯誤訊息: {result.stderr}", "31")
-        return None
-    return result.stdout.strip()
+# 【核心修正】移除 run_command，因為我們不再呼叫外部指令
+
+def get_project_tree():
+    """Generates a text-based representation of the project file tree."""
+    tree = []
+    exclude_dirs = {'.git', '__pycache__', '.vscode', 'venv', '.venv'}
+    exclude_files = {'.DS_Store', 'vsc_agent.py', 'vsc_agent_pro.py'}
+
+    for root, dirs, files in os.walk("."):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        level = root.replace(".", "").count(os.sep)
+        indent = " " * 4 * level
+        tree.append(f"{indent}{os.path.basename(root)}/")
+        sub_indent = " " * 4 * (level + 1)
+        for f in files:
+            if f not in exclude_files:
+                tree.append(f"{sub_indent}{f}")
+    return "\n".join(tree)
 
 def get_diff(original, modified, filename=""):
-    """Generates and returns a unified diff string."""
     diff_lines = difflib.unified_diff(
         original.splitlines(keepends=True),
         modified.splitlines(keepends=True),
@@ -37,160 +51,196 @@ def get_diff(original, modified, filename=""):
     return "".join(diff_lines)
 
 def print_diff(diff_text):
-    """Prints a diff with colors for better readability."""
     for line in diff_text.splitlines():
-        if line.startswith('+'):
-            print_color(line, "32")  # Green for additions
-        elif line.startswith('-'):
-            print_color(line, "31")  # Red for deletions
-        elif line.startswith('^'):
-            print_color(line, "34")  # Blue for context lines
-        else:
-            print(line)
+        if line.startswith('+'): print_color(line, "32")
+        elif line.startswith('-'): print_color(line, "31")
+        elif line.startswith('^'): print_color(line, "34")
+        else: print(line)
+        
+def git_push_changes(branch_name, file_paths, commit_message):
+    """Handles git commands to push changes to a new branch."""
+    try:
+        os.system(f"git checkout -b {branch_name}")
+        # Add all changed files, not just one
+        for file_path in file_paths:
+            os.system(f"git add '{file_path}'")
+        os.system(f"git commit -m '{commit_message}'")
+        os.system(f"git push -u origin {branch_name}")
+        return True
+    except Exception as e:
+        print_color(f"❌ 推送至 GitHub 時發生錯誤: {e}", "31")
+        return False
 
-def get_gemini_suggestion(file_content, user_prompt):
-    """Calls the Gemini CLI to get a code modification suggestion."""
-    print_color("🤖 正在思考中，請稍候...", "36")
-    
-    # Construct a high-quality prompt for the Gemini CLI
-    full_prompt = f"""
-    You are an expert pair programmer AI assistant. Your task is to modify the provided code based on the user's request.
-    IMPORTANT: Only output the complete, raw, updated code. Do not include any explanations, comments, apologies, or markdown formatting like ```python.
+# --- AI Interaction Functions (使用 Vertex AI SDK) ---
 
-    User's request: "{user_prompt}"
-
-    Here is the current code to modify:
-    --- START OF CODE ---
-    {file_content}
-    --- END OF CODE ---
-    """
-    
-    # Using the 'gemini' CLI tool
-    # Ensure the gemini CLI is authenticated and in your PATH
-    command = f"gemini pro <<< '{full_prompt}'"
-    suggested_code = run_command(command)
-    
-    if suggested_code is None:
+def get_ai_response(prompt_text, expect_json=False):
+    """Generic function to get a response from the AI model."""
+    try:
+        response = text_model.generate_content(prompt_text)
+        output = response.text
+        
+        if expect_json:
+            output = output.strip().removeprefix("```json").removesuffix("```").strip()
+            return json.loads(output)
+        return output
+    except Exception as e:
+        print_color(f"❌ 與 Gemini API 溝通時發生錯誤: {e}", "31")
+        # 嘗試印出更詳細的錯誤（如果有的話）
+        if hasattr(e, 'response'):
+             print_color(e.response, "31")
         return None
 
-    return suggested_code
+def get_files_to_edit(project_tree, user_prompt):
+    """Phase 1: Ask Gemini which files are relevant to the user's request."""
+    print_color("🤖 正在分析您的需求並規劃修改範圍...", "36")
+    prompt = f"""
+    You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified to fulfill the request.
+    Respond with ONLY a JSON array of file paths. Do not include any other text or explanation.
+    File structure:\n{project_tree}\n\nUser request: "{user_prompt}"
+    Example response: ["src/main.py", "README.md"]
+    """
+    return get_ai_response(prompt, expect_json=True)
+
+def get_code_modifications(project_tree, relevant_files_content, user_prompt):
+    """Phase 2: Ask Gemini to perform the modifications."""
+    print_color("🤖 正在根據您的指令產生修改建議...", "36")
+    files_str = "\n\n".join([f"--- START OF FILE: {path} ---\n{content}\n--- END OF FILE: {path} ---" for path, content in relevant_files_content.items()])
+    prompt = f"""
+    You are an expert pair programmer AI assistant. Your task is to modify the provided code based on the user's request.
+    The user's request may involve multiple files. You must return all changes in a single JSON object.
+    The JSON object should have file paths as keys and the complete, updated content of the file as string values.
+    IMPORTANT: The file content you return must be the *entire* file, not just the changed parts. Only include files that you are actually modifying.
+    Project file structure for context:\n{project_tree}\n\nUser request: "{user_prompt}"
+    Content of relevant files to modify:\n{files_str}
+    Your response MUST be a single, raw JSON object.
+    """
+    return get_ai_response(prompt, expect_json=True)
 
 # --- Main Agent Logic ---
 
-def main_agent():
-    # 1. Environment Check
-    if not os.path.exists('.git'):
-        print_color("❌ 錯誤：目前的資料夾不是一個 Git 倉庫。請在專案的根目錄執行此腳本。", "31")
-        sys.exit(1)
-
-    print_color("🚀 AI 程式碼代理已啟動！", "35")
-    print_color("隨時輸入 !help 來查看可用指令。", "35")
-
-    # 2. Target File Input
-    while True:
-        target_file = input("請輸入您想編輯的檔案相對路徑 (例如: src/main.py): ")
-        if not os.path.exists(target_file):
-            print_color(f"❌ 錯誤：找不到檔案 '{target_file}'。請確認路徑是否正確。", "31")
-        else:
-            break
-
+def project_agent():
+    # 1. Initialize Vertex AI
     try:
-        with open(target_file, 'r', encoding='utf-8') as f:
-            original_content = f.read()
-        current_content = original_content
-        print_color(f"✅ 已成功讀取檔案 '{target_file}'。開始進行對話式修改。", "32")
+        print_color("正在初始化 Google AI 服務...", "36")
+        # 使用應用程式預設憑證 (ADC)
+        vertexai.init()
+        # 依照您的指示，使用 gemini-2.5-pro
+        global text_model
+        text_model = GenerativeModel("gemini-2.5-pro")
+        print_color("✅ Google AI (Gemini 2.5 Pro) 初始化成功！", "32")
     except Exception as e:
-        print_color(f"❌ 讀取檔案時發生錯誤: {e}", "31")
+        print_color(f"❌ Google AI 初始化失敗: {e}", "31")
+        print_color("請確認您已執行 `gcloud auth application-default login` 並設定了 quota project。", "33")
         sys.exit(1)
 
-    # 3. Main Conversation Loop
+    # 2. Check Git repository
+    if not os.path.exists('.git'):
+        print_color("❌ 錯誤：請在 Git 專案的根目錄執行此腳本。", "31")
+        sys.exit(1)
+
+    print_color("🚀 專案級 AI 代理 Pro 已啟動！", "35")
+    
+    # 3. Load initial state
+    project_tree = get_project_tree()
+    original_contents = {}
+    for root, dirs, files in os.walk("."):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for file in files:
+            if any(file.endswith(ext) for ext in ['.py', '.md', '.txt', '.json', '.sh', '.yaml', '.toml']):
+                 try:
+                    p = Path(root) / file
+                    if str(p) == 'vsc_agent_pro.py': continue
+                    original_contents[str(p)] = p.read_text(encoding='utf-8')
+                 except (IOError, UnicodeDecodeError): pass
+    
+    current_contents = original_contents.copy()
+    print_color(f"✅ 專案掃描完成，已載入 {len(current_contents)} 個可編輯檔案。", "32")
+
+    # 4. Main Conversation Loop
     while True:
         try:
-            user_input = input("🤖 請下達您的指令 (或輸入 !help): ")
-
-            if user_input.strip() == "!quit":
-                print_color("👋 感謝使用，下次見！", "35")
-                break
-
-            elif user_input.strip() == "!help":
-                print_color("\n--- 可用指令 ---", "33")
-                print("!help   : 顯示此說明")
-                print("!diff   : 顯示目前所有的修改與原始檔案的差異")
-                print("!revert : 放棄所有修改，將檔案還原到最初狀態")
-                print("!save   : 將目前所有修改儲存並推送到 GitHub 的一個新分支")
-                print("!quit   : 退出代理程式")
-                print_color("------------------\n", "33")
+            user_input = input("🤖 請下達您的專案級指令 (或輸入 !help): ")
+            if not user_input.strip(): continue
             
-            elif user_input.strip() == '!diff':
-                diff = get_diff(original_content, current_content, target_file)
-                if not diff:
-                    print_color("✅ 目前沒有任何修改。", "32")
-                else:
-                    print_color("\n--- 目前的修改差異 ---", "33")
-                    print_diff(diff)
-                    print_color("---------------------\n", "33")
-
-            elif user_input.strip() == '!revert':
-                confirmation = input("⚠️ 您確定要放棄所有修改嗎？(y/n): ").lower()
-                if confirmation == 'y':
-                    current_content = original_content
-                    with open(target_file, 'w', encoding='utf-8') as f:
-                        f.write(current_content)
-                    print_color("✅ 所有修改已被還原。", "32")
-                else:
-                    print_color("操作已取消。", "36")
-
-            elif user_input.strip() == '!save':
-                if original_content == current_content:
+            command = user_input.strip().lower()
+            if command == "!quit": break
+            if command == "!help":
+                # ... (help logic)
+                continue
+            if command == "!save":
+                # --- Save Logic ---
+                changed_files = {
+                    path: content 
+                    for path, content in current_contents.items() 
+                    if original_contents.get(path) != content
+                }
+                if not changed_files:
                     print_color("🤔 沒有任何修改可以儲存。", "33")
                     continue
 
                 branch_name = f"feature/agent-edits-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                print_color(f"準備將變更推送至新的分支: {branch_name}", "36")
+                print_color(f"準備將 {len(changed_files)} 個檔案的變更推送至新分支: {branch_name}", "36")
                 
-                try:
-                    run_command(f"git checkout -b {branch_name}")
-                    run_command(f"git add {target_file}")
-                    commit_message = f"AI-assisted changes for {target_file}"
-                    run_command(f"git commit -m '{commit_message}'")
-                    run_command(f"git push -u origin {branch_name}")
+                commit_message = input("請輸入本次提交的說明 (Commit Message): ")
+                if not commit_message:
+                    commit_message = f"AI-assisted changes based on prompt: {user_input[:50]}..."
 
+                if git_push_changes(branch_name, list(changed_files.keys()), commit_message):
                     print_color("\n✅ 成功！已將變更推送至新分支。", "32")
-                    print_color("您現在可以關閉此終端機，並使用 VS Code 左側的「原始檔控制」面板 (Source Control) 來查看分支並建立 Pull Request。", "32")
-                    break # Task completed, exit the agent.
-                except Exception as e:
-                    print_color(f"❌ 推送至 GitHub 時發生錯誤: {e}", "31")
-                    print_color("建議手動還原變更，或解決 Git 衝突後再試一次。", "33")
-
-
-            else: # Natural Language Prompt for Gemini
-                suggested_code = get_gemini_suggestion(current_content, user_input)
-                
-                if suggested_code and suggested_code != current_content:
-                    diff = get_diff(current_content, suggested_code, target_file)
-                    print_color("\n--- Gemini 提議的變更 ---", "33")
-                    print_diff(diff)
-                    print_color("------------------------\n", "33")
-                    
-                    apply_change = input("是否套用以上變更？(y/n): ").lower()
-                    if apply_change == 'y':
-                        current_content = suggested_code
-                        with open(target_file, 'w', encoding='utf-8') as f:
-                            f.write(current_content)
-                        print_color("✅ 變更已套用！您現在可以在 VS Code 編輯器中看到即時更新。", "32")
-                    else:
-                        print_color("操作已取消，未套用變更。", "36")
-                elif suggested_code == current_content:
-                    print_color("🤔 Gemini 認為目前的程式碼已符合您的要求，無需修改。", "33")
+                    print_color("您現在可以關閉此終端機，並使用 VS Code 左側的「原始檔控制」面板來查看分支並建立 Pull Request。", "32")
+                    break # Task completed, exit
                 else:
-                    print_color("無法從 Gemini 獲取有效的建議。", "31")
+                    print_color("推送失敗，請檢查終端機中的 Git 錯誤訊息。", "31")
+                continue
 
+            # --- AI Logic ---
+            files_to_edit = get_files_to_edit(project_tree, user_input)
+            if not files_to_edit or not isinstance(files_to_edit, list):
+                print_color("🤔 AI 規劃失敗，或認為不需要修改任何檔案。", "33")
+                continue
+
+            print_color(f"📝 AI 規劃修改以下檔案: {', '.join(files_to_edit)}", "36")
+            relevant_contents = {fp: current_contents[fp] for fp in files_to_edit if fp in current_contents}
+            
+            if not relevant_contents:
+                print_color("❌ 沒有可供修改的相關檔案。", "31")
+                continue
+
+            modifications = get_code_modifications(project_tree, relevant_contents, user_input)
+            if not modifications:
+                print_color("🤔 AI 未能產生有效的修改建議。", "33")
+                continue
+
+            print_color("\n" + "="*25 + " Gemini 提議的變更 " + "="*25, "94")
+            has_changes = False
+            for file_path, new_content in modifications.items():
+                if file_path in current_contents:
+                    diff = get_diff(current_contents[file_path], new_content, file_path)
+                    if diff:
+                        has_changes = True
+                        print_color(f"\n--- 檔案: {file_path} ---", "33")
+                        print_diff(diff)
+            print_color("="*70 + "\n", "94")
+
+            if not has_changes:
+                print_color("🤔 AI 認為無需修改。", "33")
+                continue
+                
+            apply_change = input("是否套用以上所有變更？(y/n): ").lower()
+            if apply_change == 'y':
+                for file_path, new_content in modifications.items():
+                    if file_path in current_contents:
+                        current_contents[file_path] = new_content
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                print_color("✅ 所有變更已套用！", "32")
+            else:
+                print_color("操作已取消。", "36")
         except KeyboardInterrupt:
-            print_color("\n👋 偵測到中斷指令，正在離開。感謝使用！", "35")
+            print_color("\n👋 偵測到中斷指令，正在離開。", "35")
             break
         except Exception as e:
             print_color(f"\n❌ 發生未預期的錯誤: {e}", "31")
 
-
 if __name__ == "__main__":
-    main_agent()
+    project_agent()
