@@ -9,7 +9,7 @@ google-cloud-aiplatform==1.42.1
 
 # Image Processing and Storage
 cloudinary==1.40.0
-Pillow==10.2.0
+Pillow==10.4.0
 
 # Database and Caching
 redis==5.0.1
@@ -17,4 +17,8 @@ redis==5.0.1
 # Production Server
 gunicorn==21.2.0
 
-# 移除開發依賴，減少構建時間和映像大小
+# HTTP requests (needed for some dependencies)
+requests==2.31.0
+
+# Additional dependencies for stability
+urllib3==2.0.7

@@ -1,0 +1,8 @@
+# 最小化依賴版本 - 用於快速部署測試
+line-bot-sdk==3.12.0
+flask==3.0.0
+google-cloud-aiplatform==1.42.1
+cloudinary==1.40.0
+redis==5.0.1
+gunicorn==21.2.0
+requests==2.31.0
