@@ -6,3 +6,4 @@ Pillow
 gunicorn
 waitress
 redis
+google-cloud-aiplatform
