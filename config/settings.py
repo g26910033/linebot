@@ -18,12 +18,14 @@ class AppConfig:
     # GCP 設定
     gcp_service_account_json: str
     gcp_project_id: str
-    gcp_location: str = "us-central1"
     
     # Cloudinary 設定
     cloudinary_cloud_name: str
     cloudinary_api_key: str
     cloudinary_api_secret: str
+    
+    # 有預設值的參數必須放在最後
+    gcp_location: str = "us-central1"
     
     # Redis 設定
     redis_url: Optional[str] = None
