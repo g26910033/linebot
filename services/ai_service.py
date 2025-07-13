@@ -15,6 +15,7 @@
 
 import logging
 from typing import List, Dict, Any, Optional, Union
+from config.settings import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,30 +37,29 @@ class AIService:
     image analysis, location search, and conversation history management.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model_enabled: bool = True):
+    def __init__(self, config: AppConfig):
         """
         Initializes the AI Service.
 
         Args:
-            api_key (str, optional): API key for the AI service. Defaults to None.
-            model_enabled (bool, optional): Flag to enable/disable the AI model. Defaults to True.
+            config (AppConfig): The application configuration object.
         """
-        self.api_key = api_key
-        self.model_enabled = model_enabled
+        self.config = config
+        self.model_enabled = bool(self.config.gcp_service_account_json)
 
         if not self.model_enabled:
-            logger.warning("AI service model is disabled. All AI-related functionalities will return default messages.")
+            logger.warning("AI service is disabled due to missing 'gcp_service_account_json'. All AI-related functionalities will return default messages.")
         # Placeholder for AI client initialization (e.g., a custom wrapper for OpenAI/Gemini API)
         self.ai_client = None  # In a real app, this would be initialized if api_key is present.
 
+    def is_available(self) -> bool:
+        """Checks if the AI service is properly configured and available."""
+        return self.model_enabled
 
     def _check_model_status(self) -> bool:
-        """Helper to check if the model is enabled and API key is present."""
+        """Helper to check if the model is enabled."""
         if not self.model_enabled:
             logger.info("AI service model is disabled. Skipping AI operation.")
-            return False
-        if not self.api_key:
-            logger.error("AI service API key is not configured. Cannot perform AI operations.")
             return False
         # 可加速: 若 ai_client 實作初始化失敗可直接 return False
         return True
@@ -210,72 +210,3 @@ class AIService:
         except Exception:
             logger.exception("[manage_chat_history] Error. Original history length: %d", len(history) if history else 0)
             return history if history else []
-
-
-# Example usage (for demonstration purposes, can be removed in production environment)
-if __name__ == "__main__":
-    # Configure basic logging for the example
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    print("\n--- Testing AI Service (Enabled) ---")
-    # Replace 'your_secret_api_key_here' with an actual key if you have one for testing
-    ai_service_enabled = AIService(api_key="test_api_key_123", model_enabled=True)
-
-    print("\nText Generation:")
-    print(ai_service_enabled.generate_text("今天天氣如何？", history=[{"role": "user", "parts": "你好"}, {"role": "model", "parts": "我很好，你呢？"}]))
-
-    print("\nImage Generation:")
-    print(ai_service_enabled.generate_image("一隻可愛的貓咪在月光下"))
-
-    print("\nImage Analysis:")
-    print(ai_service_enabled.analyze_image("https://example.com/cat.jpg", "這隻貓咪在做什麼？"))
-
-    print("\nLocation Search:")
-    print(ai_service_enabled.search_location("台北101", latitude=25.033, longitude=121.564))
-
-    print("\nChat History Management:")
-    initial_history_data = [
-        {"role": "user", "parts": "Hello"},
-        {"role": "model", "parts": "Hi there!"},
-        "not_a_dict_item", # Test non-dict item
-        {"role": "user", "parts": ["多圖輸入1", "多圖輸入2"]}, # Test list parts
-        {"role": "model", "parts": "好的"}
-    ]
-    optimized_history_data = ai_service_enabled.manage_chat_history(initial_history_data)
-    print(f"Original history: {initial_history_data}")
-    print(f"Optimized history: {optimized_history_data}")
-
-    # Test case: history with invalid 'parts' type
-    invalid_parts_history = [{"role": "user", "parts": 123}]
-    print("\nChat History Management (Invalid Parts):")
-    optimized_invalid_parts = ai_service_enabled.manage_chat_history(invalid_parts_history)
-    print(f"Original invalid history: {invalid_parts_history}")
-    print(f"Optimized invalid history: {optimized_invalid_parts}")
-
-
-    print("\n--- Testing AI Service (Disabled) ---")
-    ai_service_disabled = AIService(model_enabled=False)
-
-    print("\nText Generation (disabled):")
-    print(ai_service_disabled.generate_text("今天天氣如何？"))
-
-    print("\nImage Generation (disabled): -- Expected Empty List --")
-    print(ai_service_disabled.generate_image("一隻可愛的貓咪在月光下"))
-
-    print("\nImage Analysis (disabled):")
-    print(ai_service_disabled.analyze_image("https://example.com/dog.jpg", "這隻狗在做什麼？"))
-
-    print("\nLocation Search (disabled):")
-    print(ai_service_disabled.search_location("倫敦塔"))
-
-
-    print("\nAPI Key Missing Test (Enabled but no key) -- Expected Error Message --")
-    ai_service_no_key = AIService(api_key=None, model_enabled=True)
-    print("\nText Generation (no key):")
-    print(ai_service_no_key.generate_text("測試無key"))
-    print("\nImage Generation (no key): -- Expected Empty List --")
-    print(ai_service_no_key.generate_image("測試無key"))
-    print("\nImage Analysis (no key):")
-    print(ai_service_no_key.analyze_image("https://example.com/no_key.jpg", "測試無key"))
-    print("\nLocation Search (no key):")
-    print(ai_service_no_key.search_location("測試無key地點"))
