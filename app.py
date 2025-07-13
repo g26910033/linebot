@@ -2,16 +2,14 @@
 主應用程式模組
 整合所有服務和處理器
 """
+
 import os
-import sys # 用於在應用程式啟動失敗時退出程序
-
+import sys
 from flask import Flask, request, abort
-
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
-
 from config.settings import load_config
 from config.render_settings import load_render_config
 from handlers.message_handlers import TextMessageHandler, ImageMessageHandler, LocationMessageHandler
@@ -56,8 +54,8 @@ class LineBotApp:
         # 初始化 LINE Bot API 客戶端
         # Configuration 和 ApiClient 應為單例，以優化資源使用和連線管理
         self.configuration: Configuration = Configuration(access_token=self.config.line_channel_access_token)
-        self.api_client: ApiClient = ApiClient(self.configuration) # ApiClient 負責 HTTP 連線
-        self.line_bot_api: MessagingApi = MessagingApi(self.api_client) # MessagingApi 提供方便的 API 呼叫方法
+        self.api_client: ApiClient = ApiClient(self.configuration)
+        self.line_bot_api: MessagingApi = MessagingApi(self.api_client)
         logger.debug("LINE Bot API client initialized.")
 
         # 初始化各類型訊息處理器，每個處理器負責處理特定類型的 LINE 訊息
@@ -115,7 +113,7 @@ class LineBotApp:
             # 檢查服務可用性，這會涉及對 AI 服務和 Redis 的輕量級檢查
             ai_available = self.ai_service.is_available()
             redis_available = self.storage_service.is_redis_available()
-            logger.info(f"Home route accessed. Services status: AI={ai_available}, Redis={redis_available}.")
+            logger.info("Home route accessed. Services status: AI=%s, Redis=%s.", ai_available, redis_available)
             return {
                 "status": "running",
                 "message": "AI LINE Bot is running successfully!",
@@ -132,7 +130,7 @@ class LineBotApp:
             """
             ai_available = self.ai_service.is_available()
             redis_available = self.storage_service.is_redis_available()
-            logger.debug(f"Health check accessed. Services status: AI={ai_available}, Redis={redis_available}.")
+            logger.debug("Health check accessed. Services status: AI=%s, Redis=%s.", ai_available, redis_available)
             return {
                 "status": "healthy",
                 "ai_service": ai_available,
@@ -150,19 +148,16 @@ class LineBotApp:
                 abort(400, description="Missing 'X-Line-Signature' header.")
 
             body = request.get_data(as_text=True)
-            logger.debug(f"Received LINE webhook callback. Body length: {len(body)} bytes.")
+            logger.debug("Received LINE webhook callback. Body length: %d bytes.", len(body))
 
             try:
-                # WebhookHandler 負責驗證簽章的有效性，並解析請求體為 LINE 事件對象
                 self.handler.handle(body, signature)
                 logger.info("LINE webhook callback processed successfully.")
             except InvalidSignatureError:
-                # 當簽章無效時，通常表示請求來源不可信或簽章密鑰不匹配
                 logger.error("Invalid signature received from LINE webhook. Request likely forged or misconfigured. Aborting with 400.")
                 abort(400, description="Invalid signature.")
-            except Exception as e:
-                # 捕獲處理 Webhook 時可能發生的所有其他異常
-                logger.exception(f"An unexpected error occurred during LINE webhook handling: {e}") # 使用 logger.exception 記錄完整的堆棧追蹤
+            except Exception:
+                logger.exception("An unexpected error occurred during LINE webhook handling.")
                 abort(500, description="Internal server error during webhook processing.")
 
             return 'OK'
@@ -175,57 +170,51 @@ class LineBotApp:
 
         @self.handler.add(MessageEvent, message=TextMessageContent)
         def handle_text_message(event: MessageEvent) -> None:
-            """處理文字訊息事件。"""
-            user_id = event.source.user_id if event.source else 'unknown_user'
-            logger.info(f"Handling TextMessage from user: {user_id}. Message: '{event.message.text[:50]}...' وصلت")
+            user_id = getattr(event.source, 'user_id', 'unknown_user')
+            msg_preview = event.message.text[:50] if hasattr(event.message, 'text') else ''
+            logger.info("Handling TextMessage from user: %s. Message: '%s...'", user_id, msg_preview)
             try:
-                # 將事件和 LINE API 客戶端傳遞給文字訊息處理器進行進一步處理
                 self.text_handler.handle(event, self.line_bot_api)
-                logger.debug(f"TextMessage for user {user_id} processed successfully.")
-            except Exception as e:
-                logger.exception(f"Error handling TextMessage for user {user_id}: {e}") # 記錄詳細錯誤和堆棧追蹤
+                logger.debug("TextMessage for user %s processed successfully.", user_id)
+            except Exception:
+                logger.exception("Error handling TextMessage for user %s.", user_id)
 
         @self.handler.add(MessageEvent, message=ImageMessageContent)
         def handle_image_message(event: MessageEvent) -> None:
-            """處理圖片訊息事件。"""
-            user_id = event.source.user_id if event.source else 'unknown_user'
-            logger.info(f"Handling ImageMessage from user: {user_id}. Message ID: {event.message.id}")
+            user_id = getattr(event.source, 'user_id', 'unknown_user')
+            msg_id = getattr(event.message, 'id', 'unknown_id')
+            logger.info("Handling ImageMessage from user: %s. Message ID: %s", user_id, msg_id)
             try:
-                # 將事件和 LINE API 客戶端傳遞給圖片訊息處理器
                 self.image_handler.handle(event, self.line_bot_api)
-                logger.debug(f"ImageMessage for user {user_id} processed successfully.")
-            except Exception as e:
-                logger.exception(f"Error handling ImageMessage for user {user_id}: {e}")
+                logger.debug("ImageMessage for user %s processed successfully.", user_id)
+            except Exception:
+                logger.exception("Error handling ImageMessage for user %s.", user_id)
 
         @self.handler.add(MessageEvent, message=LocationMessageContent)
         def handle_location_message(event: MessageEvent) -> None:
-            """處理位置訊息事件。"""
-            user_id = event.source.user_id if event.source else 'unknown_user'
-            location_info = f"lat: {event.message.latitude}, lon: {event.message.longitude}"
-            logger.info(f"Handling LocationMessage from user: {user_id}. Location: {location_info}")
+            user_id = getattr(event.source, 'user_id', 'unknown_user')
+            lat = getattr(event.message, 'latitude', None)
+            lon = getattr(event.message, 'longitude', None)
+            logger.info("Handling LocationMessage from user: %s. Location: lat=%s, lon=%s", user_id, lat, lon)
             try:
-                # 將事件和 LINE API 客戶端傳遞給位置訊息處理器
                 self.location_handler.handle(event, self.line_bot_api)
-                logger.debug(f"LocationMessage for user {user_id} processed successfully.")
-            except Exception as e:
-                logger.exception(f"Error handling LocationMessage for user {user_id}: {e}")
+                logger.debug("LocationMessage for user %s processed successfully.", user_id)
+            except Exception:
+                logger.exception("Error handling LocationMessage for user %s.", user_id)
 
     def run(self) -> None:
         """啟動 Flask 應用程式。
         在開發模式下使用 Flask 內建伺服器，生產環境下使用 Waitress WSGI 伺服器。
         """
         port = self.config.port
-        host = "0.0.0.0" # 監聽所有可用的網路介面
-
+        host = "0.0.0.0"
         if self.config.debug:
-            logger.info(f"Starting Flask development server on {host}:{port} (debug mode enabled).")
-            # debug=True 會啟用 Flask 的調試器和重新載入器，僅適用於開發環境
+            logger.info("Starting Flask development server on %s:%s (debug mode enabled).", host, port)
             self.app.run(host=host, port=port, debug=True)
         else:
-            logger.info(f"Starting production WSGI server (Waitress) on {host}:{port}.")
-            # Waitress 是一個簡單且可靠的 WSGI 伺服器，適合小型到中型應用程式的生產部署
+            logger.info("Starting production WSGI server (Waitress) on %s:%s.", host, port)
             from waitress import serve
-            serve(self.app, host=host, port=port, _quiet=True) # _quiet=True 抑制 Waitress 的啟動信息，使日誌更簡潔
+            serve(self.app, host=host, port=port, _quiet=True)
 
 def create_app() -> Flask:
     """建立 Flask 應用程式實例。
@@ -238,12 +227,10 @@ def create_app() -> Flask:
 
 
 if __name__ == "__main__":
-    # 當直接運行此腳本時，啟動應用程式
     try:
         logger.info("Running app.py directly as the main script. Initiating application startup sequence.")
         bot_app = LineBotApp()
         bot_app.run()
-    except Exception as e:
-        # 捕獲並記錄應用程式啟動時的任何嚴重錯誤
-        logger.critical(f"Application startup failed critically: {e}", exc_info=True)
-        sys.exit(1) # 以非零退出碼結束程序，表示啟動失敗
+    except Exception:
+        logger.critical("Application startup failed critically.", exc_info=True)
+        sys.exit(1)

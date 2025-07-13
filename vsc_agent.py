@@ -3,6 +3,7 @@
 
 # vsc_agent_pro.py: Final stable version using verified models.
 
+
 import os
 import sys
 import datetime
@@ -10,6 +11,7 @@ import difflib
 import json
 import re
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     import vertexai
@@ -21,11 +23,15 @@ except ImportError:
 
 # --- Helper Functions ---
 
-def print_color(text, color_code):
+
+def print_color(text: str, color_code: str) -> None:
+    """彩色輸出訊息。"""
     print(f"\033[{color_code}m{text}\033[0m")
 
-def get_project_tree():
-    tree = []
+
+def get_project_tree() -> str:
+    """取得專案目錄樹狀結構。"""
+    tree: List[str] = []
     exclude_dirs = {'.git', '__pycache__', '.vscode', 'venv', '.venv'}
     exclude_files = {'.DS_Store', 'vsc_agent.py'}
     for root, dirs, files in os.walk("."):
@@ -37,25 +43,39 @@ def get_project_tree():
             tree.append("專案根目錄/")
         else:
             tree.append(f"{indent}{base}/")
-        
         sub_indent = " " * 4 * (level + 1)
         for f in files:
             if f not in exclude_files:
                 tree.append(f"{sub_indent}{f}")
     return "\n".join(tree)
 
-def get_diff(original, modified, filename=""):
-    diff_lines = difflib.unified_diff(original.splitlines(keepends=True), modified.splitlines(keepends=True), fromfile=f"a/{filename}", tofile=f"b/{filename}")
+
+def get_diff(original: str, modified: str, filename: str = "") -> str:
+    """取得兩份檔案內容的 diff。"""
+    diff_lines = difflib.unified_diff(
+        original.splitlines(keepends=True),
+        modified.splitlines(keepends=True),
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}"
+    )
     return "".join(diff_lines)
 
-def print_diff(diff_text):
-    for line in diff_text.splitlines():
-        if line.startswith('+'): print_color(line, "32")
-        elif line.startswith('-'): print_color(line, "31")
-        elif line.startswith('^'): print_color(line, "34")
-        else: print(line)
 
-def git_push_changes(branch_name, file_paths, commit_message):
+def print_diff(diff_text: str) -> None:
+    """彩色顯示 diff 內容。"""
+    for line in diff_text.splitlines():
+        if line.startswith('+'):
+            print_color(line, "32")
+        elif line.startswith('-'):
+            print_color(line, "31")
+        elif line.startswith('^'):
+            print_color(line, "34")
+        else:
+            print(line)
+
+
+def git_push_changes(branch_name: str, file_paths: List[str], commit_message: str) -> bool:
+    """將變更推送到 GitHub 新分支。"""
     try:
         print_color(f"正在建立新分支: {branch_name}...", "36")
         os.system(f"git checkout -b {branch_name}")
@@ -72,33 +92,37 @@ def git_push_changes(branch_name, file_paths, commit_message):
 
 # --- AI Interaction Functions ---
 
-def get_ai_response(prompt_text, expect_json=False):
+
+def get_ai_response(prompt_text: str, expect_json: bool = False) -> Any:
+    """
+    與 AI 互動取得回應。
+    Args:
+        prompt_text (str): 輸入提示。
+        expect_json (bool): 是否預期回傳 JSON。
+    Returns:
+        Any: 回應內容。
+    """
     try:
         if expect_json:
-            # 【核心修正】對於可能很長的 JSON 回應使用串流模式，避免回應被截斷
             responses = model.generate_content(prompt_text, stream=True)
             output = "".join([response.text for response in responses])
         else:
             response = model.generate_content(prompt_text)
             output = response.text
-
         if expect_json:
-            # --- 核心修正：更穩健的 JSON 提取方式 ---
-            # 優先尋找被 ```json ... ``` 包圍的區塊，並處理物件與陣列
             match = re.search(r"```json\s*([\s\S]+?)\s*```", output)
             if match:
                 cleaned_output = match.group(1).strip()
             else:
-                # 如果沒有找到 markdown 區塊，則尋找第一個 '{' 或 '['
                 first_brace = output.find('{')
                 first_bracket = output.find('[')
-                
-                if first_brace == -1: json_start = first_bracket
-                elif first_bracket == -1: json_start = first_brace
-                else: json_start = min(first_brace, first_bracket)
-
+                if first_brace == -1:
+                    json_start = first_bracket
+                elif first_bracket == -1:
+                    json_start = first_brace
+                else:
+                    json_start = min(first_brace, first_bracket)
                 if json_start != -1:
-                    # 從找到的起點開始，尋找最後一個 '}' 或 ']'
                     json_end = max(output.rfind('}'), output.rfind(']'))
                     if json_end > json_start:
                         cleaned_output = output[json_start:json_end+1]
@@ -115,10 +139,20 @@ def get_ai_response(prompt_text, expect_json=False):
         return None
     except Exception as e:
         print_color(f"❌ 與 Gemini API 溝通時發生錯誤: {e}", "31")
-        if hasattr(e, 'response'): print_color(str(e.response), "31")
+        if hasattr(e, 'response'):
+            print_color(str(e.response), "31")
         return None
 
-def plan_changes(project_tree, user_prompt):
+
+def plan_changes(project_tree: str, user_prompt: str) -> Any:
+    """
+    根據使用者需求與專案結構規劃需修改的檔案。
+    Args:
+        project_tree (str): 專案結構。
+        user_prompt (str): 使用者需求。
+    Returns:
+        Any: AI 回傳的檔案路徑清單。
+    """
     print_color("🤖 正在分析您的需求並規劃修改範圍...", "36")
     prompt = f"""
     You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified.
@@ -129,9 +163,16 @@ def plan_changes(project_tree, user_prompt):
     """
     return get_ai_response(prompt, expect_json=True)
 
-def generate_full_modification(file_path, file_content, user_prompt):
+
+def generate_full_modification(file_path: str, file_content: str, user_prompt: str) -> Optional[str]:
     """
     要求 AI 針對單一檔案產生修改後的完整內容。
+    Args:
+        file_path (str): 檔案路徑。
+        file_content (str): 原始內容。
+        user_prompt (str): 使用者需求。
+    Returns:
+        Optional[str]: 修改後內容。
     """
     print_color(f"🤖 正在為 {file_path} 產生修改建議...", "36")
     prompt = f"""
@@ -146,7 +187,6 @@ def generate_full_modification(file_path, file_content, user_prompt):
     {file_content}
     --- END OF ORIGINAL FILE CONTENT ---
     """
-    # The AI's entire response is the new content. This is the most robust method.
     return get_ai_response(prompt, expect_json=False)
 
 # --- Main Agent Logic ---

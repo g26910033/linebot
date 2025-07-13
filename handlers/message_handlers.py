@@ -1,11 +1,11 @@
-    """
+
+"""
 訊息處理器模組
-負責處理不同類型的 LINE 訊息
+負責處理不同類型的 LINE 訊息，包含文字、圖片、位置等。
 """
 import threading
 from urllib.parse import quote_plus
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Optional
 from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest,
@@ -13,7 +13,6 @@ from linebot.v3.messaging import (
     CarouselTemplate, CarouselColumn, URIAction
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
-
 from services.ai_service import AIService
 from services.storage_service import StorageService
 from utils.logger import get_logger
@@ -21,51 +20,57 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+
 class MessageHandler:
-    """訊息處理器基類"""
-    
-    def __init__(self, ai_service: AIService, storage_service: StorageService):
-        self.ai_service = ai_service
-        self.storage_service = storage_service
+    """
+    訊息處理器基類。
+    提供共用錯誤回覆與地點輪播訊息產生。
+    """
+    def __init__(self, ai_service: AIService, storage_service: StorageService) -> None:
+        self.ai_service: AIService = ai_service
+        self.storage_service: StorageService = storage_service
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
-        """回覆錯誤訊息"""
+        """
+        回覆錯誤訊息。
+        Args:
+            line_bot_api (MessagingApi): LINE API 實例。
+            reply_token (str): 回覆 token。
+            error_message (str): 錯誤訊息。
+        """
         line_bot_api.reply_message_with_http_info(
             ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
         )
 
     def _create_location_carousel(self, places_list: List[Dict[str, str]], line_bot_api: MessagingApi, user_id: str) -> None:
-        """建立地點輪播訊息
-        最多顯示 5 個地點。
+        """
+        建立地點輪播訊息，最多顯示 5 個地點。
+        Args:
+            places_list (List[Dict[str, str]]): 地點清單。
+            line_bot_api (MessagingApi): LINE API 實例。
+            user_id (str): 用戶 ID。
         """
         if not places_list:
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，找不到符合條件的地點。")])
             )
             return
-        
-        columns = []
-        for place in places_list[:5]:  # 最多顯示 5 個地點
+        columns: List[CarouselColumn] = []
+        for place in places_list[:5]:
             place_name = place.get("name")
             place_address = place.get("address")
             phone_number = place.get("phone_number", "無提供電話")
-            
             if not all([place_name, place_address]):
-                # Skip if essential information is missing
                 continue
-            
             encoded_query = quote_plus(f"{place_name} {place_address}")
             map_url = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
-            
             display_text = f"{place_address}\n電話：{phone_number}"
-            
             column = CarouselColumn(
                 title=place_name,
-                text=display_text[:60],  # LINE API 限制文字長度
+                text=display_text[:60],
                 actions=[URIAction(label='在地圖上打開', uri=map_url)]
             )
             columns.append(column)
-        
         if columns:
             template_message = TemplateMessage(
                 alt_text='為您找到推薦地點！',
@@ -75,7 +80,6 @@ class MessageHandler:
                 PushMessageRequest(to=user_id, messages=[template_message])
             )
         else:
-            # If no valid columns could be created from the places_list
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，AI 回傳的資料格式有誤，無法為您顯示地點。")])
             )

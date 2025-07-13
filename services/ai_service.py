@@ -14,10 +14,7 @@
 """
 
 import logging
-from typing import List, Dict, Any, Optional
-
-# Assuming there might be a config module in the project for settings
-# from config import settings
+from typing import List, Dict, Any, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +36,7 @@ class AIService:
     image analysis, location search, and conversation history management.
     """
 
-    def __init__(self, api_key: str = None, model_enabled: bool = True):
+    def __init__(self, api_key: Optional[str] = None, model_enabled: bool = True):
         """
         Initializes the AI Service.
 
@@ -53,9 +50,7 @@ class AIService:
         if not self.model_enabled:
             logger.warning("AI service model is disabled. All AI-related functionalities will return default messages.")
         # Placeholder for AI client initialization (e.g., a custom wrapper for OpenAI/Gemini API)
-        # self.ai_client = SomeAIClient(api_key=self.api_key) if self.api_key else None
-        # For demonstration purposes, we'll use a placeholder for the AI client.
-        self.ai_client = None # In a real app, this would be initialized if api_key is present.
+        self.ai_client = None  # In a real app, this would be initialized if api_key is present.
 
 
     def _check_model_status(self) -> bool:
@@ -66,10 +61,7 @@ class AIService:
         if not self.api_key:
             logger.error("AI service API key is not configured. Cannot perform AI operations.")
             return False
-        # In a real scenario, you might also check self.ai_client for actual initialization
-        # if self.ai_client is None:
-        #     logger.error("AI client failed to initialize.")
-        #     return False
+        # 可加速: 若 ai_client 實作初始化失敗可直接 return False
         return True
 
     def generate_text(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -86,36 +78,21 @@ class AIService:
         
         # Log more context for better debugging
         history_summary = f"{len(history)} items" if history else "no history"
-        logger.info(f"Attempting to generate text for prompt: '{prompt}' with history: {history_summary}")
+        logger.info("[generate_text] prompt='%s' history=%s", prompt, history_summary)
 
-        raw_response_data: Optional[Any] = None # To store raw response for debugging
+        raw_response_data: Optional[Any] = None
         try:
-            # --- Placeholder for actual text generation logic ---
-            # In a real application, you would call:
-            # api_response = self.ai_client.generate_text(prompt, history)
-            # response = _MockAIResponse(text=api_response.text, raw_data=api_response.raw_data)
-            # For demonstration, simulate success or failure
-            
             # Simulate a successful response
             simulated_text = f"AI 服務已接收請求，正在生成關於 '{prompt}' 的文字內容... (使用歷史: {history_summary})"
             raw_response_data = {"status": "success", "generated_text": simulated_text, "input_prompt": prompt, "input_history": history}
             response = _MockAIResponse(text=simulated_text, raw_data=raw_response_data)
 
-            # Robustness check for the response
             if not response or not response.text:
-                # Log the raw response data if available for debugging
-                logger.error(f"AI model returned invalid or empty text response. Prompt: '{prompt}'. Raw data: {response.raw_data}")
+                logger.error("[generate_text] Empty response. prompt='%s' raw=%s", prompt, response.raw_data)
                 raise ValueError("AI model returned an invalid or empty response for text generation.")
-            
             return response.text
         except Exception as e:
-            # Capture and log specific details of the error, including raw response if available
-            error_message = f"Error generating text for prompt '{prompt}'."
-            if history:
-                error_message += f" History length: {len(history)}."
-            if raw_response_data:
-                error_message += f" Raw response info: {raw_response_data}"
-            logger.error(error_message, exc_info=True)
+            logger.exception("[generate_text] Error. prompt='%s' history=%s raw=%s", prompt, history_summary, raw_response_data)
             return "文字生成失敗，請稍後再試。"
 
     def generate_image(self, description: str) -> List[str]:
@@ -128,34 +105,25 @@ class AIService:
         - Improved logging with context (description).
         """
         if not self._check_model_status():
-            # Return an empty list for consistency if returning URLs
-            logger.info("AI service model is disabled or API key missing. Cannot generate images.")
-            return [] 
+            logger.info("[generate_image] Disabled or no API key. description='%s'", description)
+            return []
 
-        logger.info(f"Attempting to generate image for description: '{description}'")
-
+        logger.info("[generate_image] description='%s'", description)
         raw_response_data: Optional[Any] = None
         try:
-            # --- Placeholder for actual image generation logic ---
-            # api_response = self.ai_client.generate_image(description)
-            # response = _MockAIResponse(images=api_response.images, raw_data=api_response.raw_data)
-
-            # Simulate a successful response
-            simulated_images = [f"https://example.com/generated_image_{hash(description)}.png?v=1", f"https://example.com/generated_image_{hash(description)}_alt.png?v=2"]
+            simulated_images = [
+                f"https://example.com/generated_image_{hash(description)}.png?v=1",
+                f"https://example.com/generated_image_{hash(description)}_alt.png?v=2"
+            ]
             raw_response_data = {"status": "success", "generated_images": simulated_images, "input_description": description}
             response = _MockAIResponse(images=simulated_images, raw_data=raw_response_data)
 
-            # Robustness check for the response
             if not response or not response.images:
-                logger.error(f"AI model returned no images for description: '{description}'. Raw data: {response.raw_data}")
+                logger.error("[generate_image] No images. description='%s' raw=%s", description, response.raw_data)
                 raise ValueError("AI model returned no images for the given description.")
-            
             return response.images
-        except Exception as e:
-            error_message = f"Error generating image for description '{description}'."
-            if raw_response_data:
-                error_message += f" Raw response info: {raw_response_data}"
-            logger.error(error_message, exc_info=True)
+        except Exception:
+            logger.exception("[generate_image] Error. description='%s' raw=%s", description, raw_response_data)
             return []
 
     def analyze_image(self, image_url: str, question: Optional[str] = None) -> str:
@@ -170,30 +138,19 @@ class AIService:
         if not self._check_model_status():
             return "AI 服務目前未啟用或設定不完整，無法執行圖片分析。"
 
-        logger.info(f"Attempting to analyze image: '{image_url}' with question: '{question or 'None'}'")
-
+        logger.info("[analyze_image] image_url='%s' question='%s'", image_url, question)
         raw_response_data: Optional[Any] = None
         try:
-            # --- Placeholder for actual image analysis logic ---
-            # api_response = self.ai_client.analyze_image(image_url, question)
-            # response = _MockAIResponse(text=api_response.text, raw_data=api_response.raw_data)
-
-            # Simulate a successful response
             simulated_analysis = f"AI 服務已分析圖片 '{image_url}'，結果顯示：這是一張... (針對問題 '{question or '無'} ' 的回答)"
             raw_response_data = {"status": "success", "analysis_result": simulated_analysis, "input_image": image_url, "input_question": question}
             response = _MockAIResponse(text=simulated_analysis, raw_data=raw_response_data)
 
-            # Robustness check for the response
             if not response or not response.text:
-                logger.error(f"AI model returned no analysis result for image '{image_url}' (question: '{question}'). Raw data: {response.raw_data}")
+                logger.error("[analyze_image] No analysis result. image_url='%s' question='%s' raw=%s", image_url, question, response.raw_data)
                 raise ValueError("AI model returned no analysis result for the image.")
-            
             return response.text
-        except Exception as e:
-            error_message = f"Error analyzing image '{image_url}' with question '{question}'."
-            if raw_response_data:
-                error_message += f" Raw response info: {raw_response_data}"
-            logger.error(error_message, exc_info=True)
+        except Exception:
+            logger.exception("[analyze_image] Error. image_url='%s' question='%s' raw=%s", image_url, question, raw_response_data)
             return "圖片分析失敗，請稍後再試。"
 
     def search_location(self, query: str, latitude: Optional[float] = None, longitude: Optional[float] = None) -> str:
@@ -208,33 +165,22 @@ class AIService:
         if not self._check_model_status():
             return "AI 服務目前未啟用或設定不完整，無法執行地點搜尋。"
 
-        logger.info(f"Attempting to search location for query: '{query}' at ({latitude}, {longitude})")
-
+        logger.info("[search_location] query='%s' lat=%s lon=%s", query, latitude, longitude)
         raw_response_data: Optional[Any] = None
         try:
-            # --- Placeholder for actual location search logic ---
-            # api_response = self.ai_client.search_location(query, latitude, longitude)
-            # response = _MockAIResponse(text=api_response.text, raw_data=api_response.raw_data)
-
-            # Simulate a successful response
             simulated_location = f"AI 服務已搜尋 '{query}'，找到多個地點資訊，其中一個是：XX 地址位於 YY 附近。 (經緯度: {latitude}, {longitude})"
             raw_response_data = {"status": "success", "search_result": simulated_location, "input_query": query, "input_lat": latitude, "input_lon": longitude}
             response = _MockAIResponse(text=simulated_location, raw_data=raw_response_data)
 
-            # Robustness check for the response
             if not response or not response.text:
-                logger.error(f"AI model returned no search result for query '{query}' at ({latitude}, {longitude}). Raw data: {response.raw_data}")
+                logger.error("[search_location] No result. query='%s' lat=%s lon=%s raw=%s", query, latitude, longitude, response.raw_data)
                 raise ValueError("AI model returned no search result for the location query.")
-            
             return response.text
-        except Exception as e:
-            error_message = f"Error searching location for query '{query}' at ({latitude}, {longitude})."
-            if raw_response_data:
-                error_message += f" Raw response info: {raw_response_data}"
-            logger.error(error_message, exc_info=True)
+        except Exception:
+            logger.exception("[search_location] Error. query='%s' lat=%s lon=%s raw=%s", query, latitude, longitude, raw_response_data)
             return "地點搜尋失敗，請稍後再試。"
 
-    def manage_chat_history(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def manage_chat_history(self, history: Union[List[Dict[str, Any]], None]) -> List[Dict[str, Any]]:
         """
         Processes and optimizes chat history for consistency and compatibility with AI models,
         e.g., reconstructing Part objects or validating structure.
@@ -243,50 +189,27 @@ class AIService:
         - Robust reconstruction/validation of chat history `Part` objects or equivalent structures.
         """
         if not history:
-            logger.info("No chat history to manage. Returning empty list.")
+            logger.info("[manage_chat_history] No chat history to manage. Returning empty list.")
             return []
 
-        logger.info(f"Managing and optimizing chat history with {len(history)} items.")
+        logger.info("[manage_chat_history] Optimizing chat history with %d items.", len(history))
         optimized_history = []
         try:
             for i, item in enumerate(history):
                 if isinstance(item, dict):
-                    # In a real application, this is where you'd integrate with an AI SDK's
-                    # specific object types, e.g., google.generativeai.types.Part.
-                    # For example:
-                    # from google.generativeai.types import Part
-                    # if 'role' in item and 'parts' in item:
-                    #     try:
-                    #         # Assuming 'parts' can be a single value or a list of values
-                    #         content_parts = item['parts']
-                    #         if not isinstance(content_parts, list):
-                    #             content_parts = [content_parts]
-                    #         reconstructed_parts = [Part.from_value(p) if not isinstance(p, Part) else p for p in content_parts]
-                    #         optimized_history.append({"role": item['role'], "parts": reconstructed_parts})
-                    #     except Exception as part_e:
-                    #         logger.warning(f"Failed to reconstruct Part object for history item {i}: {item}. Error: {part_e}")
-                    #         optimized_history.append(item.copy()) # Fallback
-                    # else:
-                    #     logger.warning(f"History item {i} missing 'role' or 'parts' key. Item: {item}")
-                    #     optimized_history.append(item.copy()) # Fallback
-                    
-                    # For a more generic robustness check, validate the 'parts' field if present.
-                    if 'parts' in item and not isinstance(item['parts'], (list, str)):
-                         logger.warning(f"History item {i} has invalid 'parts' format. Expected list or string, got {type(item['parts']).__name__}. Item: {item}")
-                         # For robust operation, we append a copy, allowing the AI model call to handle it
-                         # or fail gracefully later if the format is truly unacceptable.
-                         optimized_history.append(item.copy())
+                    parts = item.get('parts', None)
+                    if parts is not None and not isinstance(parts, (list, str)):
+                        logger.warning("[manage_chat_history] Item %d invalid 'parts' type: %s. Item: %s", i, type(parts).__name__, item)
+                        optimized_history.append(item.copy())
                     else:
                         optimized_history.append(item.copy())
                 else:
-                    logger.warning(f"History item {i} is not a dictionary. Skipping or appending as-is: {item}")
-                    optimized_history.append(item) # Append as-is if not dict
+                    logger.warning("[manage_chat_history] Item %d is not a dict. Appending as-is: %s", i, item)
+                    optimized_history.append(item)
             return optimized_history
-        except Exception as e:
-            # Log the entire history (or a summary/hash) for debugging if it causes issues.
-            logger.error(f"Error managing chat history. Original history length: {len(history)}. Error: {e}", exc_info=True)
-            # Return original history on error to prevent data loss or provide a partial result
-            return history
+        except Exception:
+            logger.exception("[manage_chat_history] Error. Original history length: %d", len(history) if history else 0)
+            return history if history else []
 
 
 # Example usage (for demonstration purposes, can be removed in production environment)

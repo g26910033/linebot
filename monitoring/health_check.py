@@ -1,35 +1,45 @@
-    """
+
+"""
 健康檢查和監控模組
-優化 Render 平台監控
+提供系統資源、服務狀態監控，優化 Render 平台監控。
 """
 import time
 import psutil
 from typing import Dict, Any
-
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class HealthChecker:
-    """健康檢查器"""
 
-    def __init__(self):
-        self.start_time = time.time()
+class HealthChecker:
+    """
+    健康檢查器。
+    提供系統資源、服務狀態查詢，支援 Render 平台監控。
+    """
+    def __init__(self) -> None:
+        self.start_time: float = time.time()
 
     def get_health_status(self) -> Dict[str, Any]:
-        """取得詳細健康狀態"""
-        current_time = time.time()  # 獲取一次當前時間以確保時間戳和運行時間的一致性
+        """
+        取得詳細健康狀態。
+        Returns:
+            Dict[str, Any]: 健康狀態資訊。
+        """
+        current_time: float = time.time()
         try:
+            system_info: Dict[str, Any] = self._get_system_info()
+            services_info: Dict[str, bool] = self._check_services()
+            logger.debug("[HealthChecker] Health status OK. uptime=%.2fs", current_time - self.start_time)
             return {
                 "status": "healthy",
                 "timestamp": current_time,
                 "uptime": current_time - self.start_time,
-                "system": self._get_system_info(),
-                "services": self._check_services(),
+                "system": system_info,
+                "services": services_info,
             }
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            logger.exception("[HealthChecker] Health check failed.")
             return {
                 "status": "unhealthy",
                 "error": str(e),
@@ -37,37 +47,39 @@ class HealthChecker:
             }
 
     def _get_system_info(self) -> Dict[str, Any]:
-        """取得系統資訊"""
+        """
+        取得系統資訊。
+        Returns:
+            Dict[str, Any]: CPU、記憶體、磁碟使用率。
+        """
         try:
-            # psutil.cpu_percent() 在無 interval 參數時是非阻塞的，會計算自上次呼叫以來的 CPU 使用率。
-            # 這樣可以避免健康檢查阻塞，使其更快速響應。
+            cpu: float = psutil.cpu_percent()
+            mem: float = psutil.virtual_memory().percent
+            disk: float = psutil.disk_usage('/').percent
+            logger.debug("[HealthChecker] System info: cpu=%.1f%% mem=%.1f%% disk=%.1f%%", cpu, mem, disk)
             return {
-                "cpu_percent": psutil.cpu_percent(),
-                "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent,
+                "cpu_percent": cpu,
+                "memory_percent": mem,
+                "disk_percent": disk,
             }
-        except Exception as e:  # 捕獲具體異常並記錄
-            logger.error(f"Error getting system info: {e}")
+        except Exception as e:
+            logger.exception("[HealthChecker] Error getting system info.")
             return {"error": f"Unable to get system info: {e}"}
 
     def _check_services(self) -> Dict[str, bool]:
-        """檢查服務狀態"""
-        # 這裡可以加入實際的服務檢查邏輯，例如檢查資料庫連線、其他微服務的健康端點等。
-        # 示例：
-        # try:
-        #     db_status = self._check_database_connection()
-        # except Exception:
-        #     db_status = False
-        # return {
-        #     "database": db_status,
-        #     "ai_service": self._check_ai_service_health(),
-        # }
-        return {
+        """
+        檢查服務狀態。
+        Returns:
+            Dict[str, bool]: 各服務狀態。
+        """
+        services: Dict[str, bool] = {
             "ai_service": True,
             "storage_service": True,
             "database": True,
         }
+        logger.debug("[HealthChecker] Service status: %s", services)
+        return services
 
 
 # 全域健康檢查器實例
-health_checker = HealthChecker()
+health_checker: HealthChecker = HealthChecker()

@@ -1,68 +1,90 @@
-    """
+
+"""
 快取服務模組
-優化 Render 平台效能
+提供記憶體快取（LRU）、回應快取裝飾器，優化 Render 平台效能。
 """
 import json
 import time
-import collections
-from typing import Optional, Any, Dict
+from collections import OrderedDict
+from typing import Optional, Any, Dict, Callable
 from functools import wraps
-
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class MemoryCache:
-    """記憶體快取實作（當 Redis 不可用時使用）"""
-    
-    def __init__(self, max_size: int = 1000):
-        # 使用 OrderedDict 來實現 LRU (Least Recently Used) 策略
-        self._cache: collections.OrderedDict[str, Dict[str, Any]] = collections.OrderedDict()
-        self._max_size = max_size
-    
-    def get(self, key: str) -> Optional[str]:
-        """取得快取值"""
-        if key not in self._cache:
-            return None
 
-        item = self._cache[key]
-        if time.time() < item['expires']:
-            # 將最近使用的項目移到 OrderedDict 的末尾，實現 LRU
-            self._cache.move_to_end(key)
-            return item['value']
-        else:
-            # 已過期的項目，從快取中刪除
-            del self._cache[key]
+
+class MemoryCache:
+    """
+    記憶體快取實作（當 Redis 不可用時使用）。
+    採用 LRU (Least Recently Used) 策略，最大容量可自訂。
+    """
+    def __init__(self, max_size: int = 1000) -> None:
+        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._max_size: int = max_size
+
+    def get(self, key: str) -> Optional[str]:
+        """
+        取得快取值。
+        Args:
+            key (str): 快取鍵。
+        Returns:
+            Optional[str]: 快取值或 None。
+        """
+        item = self._cache.get(key)
+        if not item:
+            logger.debug("[MemoryCache] Miss for key: %s", key)
             return None
-    
+        if time.time() < item['expires']:
+            self._cache.move_to_end(key)
+            logger.debug("[MemoryCache] Hit for key: %s", key)
+            return item['value']
+        del self._cache[key]
+        logger.info("[MemoryCache] Expired key removed: %s", key)
+        return None
+
     def set(self, key: str, value: str, ex: int = 300) -> bool:
-        """設定快取值"""
+        """
+        設定快取值。
+        Args:
+            key (str): 快取鍵。
+            value (str): 快取值。
+            ex (int): 過期秒數。
+        Returns:
+            bool: 設定成功則 True。
+        """
         try:
-            # 如果 key 已存在，先刪除，以便後續重新插入時能移到 OrderedDict 末尾 (LRU 策略)
             if key in self._cache:
                 del self._cache[key]
-
-            # 如果快取已滿，移除最舊的項目 (OrderedDict 的第一個)，實現 O(1) 移除
             if len(self._cache) >= self._max_size:
-                self._cache.popitem(last=False) # 移除 LRU 中最不常用的 (最舊的)
-            
-            # 添加新項目或更新項目，並將其置於 OrderedDict 末尾
+                removed_key, _ = self._cache.popitem(last=False)
+                logger.info("[MemoryCache] LRU evict: %s", removed_key)
+            now = time.time()
             self._cache[key] = {
                 'value': value,
-                'expires': time.time() + ex,
-                'created': time.time() # 仍然記錄創建時間，但 LRU 策略主要依賴 OrderedDict 的順序
+                'expires': now + ex,
+                'created': now
             }
+            logger.debug("[MemoryCache] Set key: %s", key)
             return True
-        except Exception as e:
-            logger.error(f"Memory cache set error for key '{key}': {e}")
+        except Exception:
+            logger.exception("[MemoryCache] Set error for key '%s'", key)
             return False
-    
+
     def delete(self, key: str) -> bool:
-        """刪除快取值"""
+        """
+        刪除快取值。
+        Args:
+            key (str): 快取鍵。
+        Returns:
+            bool: 刪除成功則 True。
+        """
         if key in self._cache:
             del self._cache[key]
+            logger.debug("[MemoryCache] Deleted key: %s", key)
             return True
+        logger.debug("[MemoryCache] Delete miss for key: %s", key)
         return False
 
 
@@ -72,66 +94,48 @@ class MemoryCache:
 _global_memory_cache = MemoryCache()
 
 
-def cache_response(timeout: int = 300):
-    """回應快取裝飾器"
-    
-    此裝飾器用於快取函式（通常是 API 端點）的回應。
-    它會將函式的參數和結果序列化為 JSON 並存儲在記憶體快取中。
-    
+
+def cache_response(timeout: int = 300) -> Callable:
+    """
+    回應快取裝飾器。
+    用於快取函式（通常是 API 端點）的回應。
     Args:
         timeout (int): 快取失效時間 (秒)。
+    Returns:
+        Callable: 裝飾器。
     """
-    def decorator(func):
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # 生成快取鍵，確保一致性。盡可能使用 JSON 序列化來獲得穩定 hash。
             try:
-                # 對 args 和 kwargs 進行排序和 JSON 序列化，以確保 hash 值穩定。
-                # 注意：args/kwargs 必須是 JSON 序列化的。
                 cache_key_parts = (func.__name__, args, tuple(sorted(kwargs.items())))
-                cache_key = f"response_cache:{hash(json.dumps(cache_key_parts, sort_keys=True))}"
+                cache_key = f"response_cache:{hash(json.dumps(cache_key_parts, sort_keys=True, default=str))}"
             except TypeError:
-                logger.warning(
-                    f"Warning: Arguments or keyword arguments for '{func.__name__}' are not JSON serializable. "
-                    f"Falling back to less robust string hashing. Consider making function arguments JSON-friendly."
-                )
-                # 容錯處理：如果無法 JSON 序列化，則回退到原始的簡單字符串拼接和 hash
+                logger.warning("[cache_response] Args for '%s' not JSON serializable. Fallback to string hash.", func.__name__)
                 cache_key = f"response_cache:{func.__name__}:{hash(str(args) + str(kwargs))}"
-            except Exception as e:
-                logger.error(
-                    f"Error generating cache key for '{func.__name__}': {e}. Falling back to simple string hashing."
-                )
+            except Exception:
+                logger.exception("[cache_response] Error generating cache key for '%s'", func.__name__)
                 cache_key = f"response_cache:{func.__name__}:{hash(str(args) + str(kwargs))}"
 
-            # 嘗試從快取取得
             cached_data = _global_memory_cache.get(cache_key)
-
             if cached_data:
-                logger.debug(f"Cache hit for key: {cache_key}")
+                logger.debug("[cache_response] Hit for key: %s", cache_key)
                 try:
                     return json.loads(cached_data)
-                except json.JSONDecodeError as e:
-                    logger.error(
-                        f"Failed to decode cached data for key '{cache_key}': {e}. "
-                        f"Deleting corrupted cache entry and re-executing function."
-                    )
+                except json.JSONDecodeError:
+                    logger.error("[cache_response] Corrupted cache for key: %s. Deleting.", cache_key)
                     _global_memory_cache.delete(cache_key)
-                    # Fall through to execute the function
             else:
-                logger.debug(f"Cache miss for key: {cache_key}")
+                logger.debug("[cache_response] Miss for key: %s", cache_key)
 
-            # 如果沒有快取，執行函式並快取結果
             result = func(*args, **kwargs)
-
-            # 快取結果，假設結果是 JSON 序列化的。如果不是，將不會被快取。
             try:
-                _global_memory_cache.set(cache_key, json.dumps(result), ex=timeout)
-                logger.debug(f"Cache set for key: {cache_key}")
+                _global_memory_cache.set(cache_key, json.dumps(result, default=str), ex=timeout)
+                logger.debug("[cache_response] Set for key: %s", cache_key)
             except TypeError:
-                logger.error(f"Function result for '{func.__name__}' is not JSON serializable. Cannot cache this result.")
-            except Exception as e:
-                logger.error(f"Error setting cache for key '{cache_key}': {e}")
-
+                logger.error("[cache_response] Result for '%s' not JSON serializable. Not cached.", func.__name__)
+            except Exception:
+                logger.exception("[cache_response] Error setting cache for key: %s", cache_key)
             return result
         return wrapper
     return decorator
