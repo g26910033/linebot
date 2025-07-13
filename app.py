@@ -2,6 +2,7 @@
 主應用程式模組
 整合所有服務和處理器
 """
+import os
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
