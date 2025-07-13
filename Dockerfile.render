@@ -1,50 +1,60 @@
 
-# Render 平台最佳化 Dockerfile
+# Render 平台最佳化 Dockerfile (多階段構建)
+
+# --- 階段 1: 構建環境 ---
+FROM python:3.11-slim as builder
+
+# 1. 設定工作目錄
+WORKDIR /app
+
+# 2. 安裝系統依賴
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. 升級 pip 與安裝構建工具
+RUN pip install --upgrade pip wheel setuptools
+
+# 4. 複製需求檔案並安裝
+COPY requirements-minimal.txt ./
+RUN pip install --no-cache-dir -r requirements-minimal.txt
+
+# --- 階段 2: 生產環境 ---
 FROM python:3.11-slim
 
 # 1. 設定工作目錄
 WORKDIR /app
 
-# 2. 預先複製需求檔案（利於快取）
-COPY requirements.txt ./
-
-# 3. 安裝系統依賴（Pillow/科學運算/壓縮等）
+# 2. 安裝必要的系統依賴
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
     libjpeg-dev \
     zlib1g-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libopenjp2-7-dev \
-    libtiff5-dev \
-    tk-dev \
-    tcl-dev \
-    libharfbuzz-dev \
-    libfribidi-dev \
-    libxcb1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. 升級 pip 與安裝構建工具
-RUN pip install --upgrade pip wheel setuptools
+# 3. 從構建環境複製已安裝的套件
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
-# 5. 安裝 Python 依賴（無快取，避免映像膨脹）
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 6. 複製應用程式碼（最後進行，利於快取）
+# 4. 複製應用程式碼
 COPY . .
 
-# 7. 設定環境變數（安全/效能）
+# 5. 設定環境變數
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Taipei
 
-# 8. 權限最佳化（非 root 執行，提升安全性）
+# 6. 權限最佳化
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
-# 9. 暴露應用埠
+# 7. 暴露應用埠
 EXPOSE $PORT
 
-# 10. 預設啟動命令（可依 render.yaml 覆蓋）
-CMD gunicorn main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100
+# 8. 預設啟動命令
+CMD gunicorn "app:create_app()" \
+    --bind 0.0.0.0:$PORT \
+    --workers 3 \
+    --timeout 60 \
+    --keep-alive 5 \
+    --max-requests 2000 \
+    --max-requests-jitter 200

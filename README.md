@@ -118,10 +118,7 @@ python main.py
 ### 生產環境
 ```bash
 # 使用 Gunicorn
-gunicorn "app:create_app()"
-
-# 或使用 Waitress
-python app.py --port 10000
+gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --workers 3 --timeout 60 --keep-alive 5 --max-requests 2000 --max-requests-jitter 200
 ```
 
 ## API 端點

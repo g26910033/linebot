@@ -7,16 +7,15 @@ services:
     autoDeploy: true
     buildCommand: |
       pip install --upgrade pip
-      pip install --no-cache-dir wheel setuptools
-      pip install --no-cache-dir -r requirements.txt
+      pip install --no-cache-dir -r requirements-minimal.txt
     startCommand: |
       gunicorn "app:create_app()" \
         --bind 0.0.0.0:$PORT \
-        --workers 2 \
-        --timeout 120 \
-        --keep-alive 2 \
-        --max-requests 1000 \
-        --max-requests-jitter 100
+        --workers 3 \
+        --timeout 60 \
+        --keep-alive 5 \
+        --max-requests 2000 \
+        --max-requests-jitter 200
     envVars:
       - key: PYTHON_VERSION
         value: 3.11

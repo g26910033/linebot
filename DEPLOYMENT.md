@@ -74,16 +74,14 @@ google-cloud-aiplatform==1.42.1
 
 ### 1. 建議啟動命令（Gunicorn）
 ```bash
-# 基本
-gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --workers 2
-# 進階優化
+# 優化後
 gunicorn "app:create_app()" \
   --bind 0.0.0.0:$PORT \
-  --workers 2 \
-  --timeout 120 \
-  --keep-alive 2 \
-  --max-requests 1000 \
-  --max-requests-jitter 100
+  --workers 3 \
+  --timeout 60 \
+  --keep-alive 5 \
+  --max-requests 2000 \
+  --max-requests-jitter 200
 ```
 
 ### 2. Worker 數量建議
