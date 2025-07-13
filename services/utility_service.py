@@ -54,7 +54,8 @@ class UtilityService:
             if data.get("result") == "success":
                 return data.get('rates')
             else:
-                logger.error(f"Exchange rate API returned an error: {data.get('error-type')}")
+                # 記錄完整的錯誤回應以供除錯
+                logger.error(f"Exchange rate API returned an error: {data}")
                 return None
         except requests.RequestException as e:
             logger.error(f"Failed to fetch exchange rates: {e}")

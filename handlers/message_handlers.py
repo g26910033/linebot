@@ -222,7 +222,9 @@ class TextMessageHandler(MessageHandler):
         return text.endswith("天氣")
 
     def _is_news_command(self, text: str) -> bool:
-        return text in ["新聞", "頭條", "頭條新聞", "最新新聞"]
+        # 放寬判斷條件，檢查是否包含關鍵字
+        keywords = ["新聞", "頭條"]
+        return any(keyword in text.lower() for keyword in keywords)
 
     def _is_translation_command(self, text: str) -> bool:
         return text.lower().startswith("翻譯")
