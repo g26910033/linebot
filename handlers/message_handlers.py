@@ -35,8 +35,38 @@ class MessageHandler:
             logger.error(f"Exception when sending reply message: {e}", exc_info=True)
 
     def _create_location_carousel(self, places_list, line_bot_api, user_id):
-        # ... (此函式維持不變)
-        pass
+        """根據地點列表建立輪播訊息"""
+        columns = []
+        # 限制輪播項目數量，最多10個
+        for place in places_list[:10]:
+            try:
+                title = place.get('displayName', {}).get('text', '地點資訊')
+                # 確保標題長度不超過40個字元
+                title = title[:40]
+
+                address = place.get('formattedAddress', '地址未提供')
+                # 確保地址長度不超過60個字元
+                address = address[:60]
+
+                # 建立 Google Maps 連結
+                maps_query = quote_plus(f"{title} {address}")
+                maps_url = f"https://www.google.com/maps/search/?api=1&query={maps_query}"
+
+                column = CarouselColumn(
+                    title=title,
+                    text=address,
+                    actions=[
+                        URIAction(
+                            label='在地圖上查看',
+                            uri=maps_url
+                        )
+                    ]
+                )
+                columns.append(column)
+            except Exception as e:
+                logger.error(f"Error creating carousel column for place {place.get('displayName')}: {e}")
+                continue
+        return TemplateMessage(alt_text='地點搜尋結果', template=CarouselTemplate(columns=columns)) if columns else TextMessage(text="抱歉，無法生成地點資訊卡片。")
 
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
@@ -144,15 +174,69 @@ class TextMessageHandler(MessageHandler):
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""
 
-    # 【核心修正】新增 handle 方法作為統一入口
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
-        # ... (後續的 try/except 邏輯與您現有的程式碼完全相同)
-        pass
+        user_id = event.source.user_id
+        reply_token = event.reply_token
+        message_id = event.message.id
+        logger.info(f"Received image message from user {user_id}, message_id: {message_id}")
+
+        def task():
+            """在背景執行緒中處理耗時的圖片分析任務"""
+            try:
+                # 1. 下載圖片
+                message_content: MessagingApiBlob = line_bot_api.get_message_content(message_id=message_id)
+                image_bytes = message_content.content
+                
+                # 2. 進行 AI 分析
+                analysis_result = self.ai_service.analyze_image(image_bytes)
+                
+                # 3. 推送分析結果
+                line_bot_api.push_message(
+                    PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)])
+                )
+            except Exception as e:
+                logger.error(f"Error in image analysis background task for user {user_id}: {e}", exc_info=True)
+                try:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，分析圖片時發生了一點問題，請稍後再試一次。")]))
+                except Exception as push_e:
+                    logger.error(f"Failed to push error message to user {user_id}: {push_e}", exc_info=True)
+
+        # 立即回覆使用者，告知已收到圖片
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片，正在為您分析...")])
+        )
+        # 啟動背景任務
+        threading.Thread(target=task).start()
 
 class LocationMessageHandler(MessageHandler):
     """位置訊息處理器"""
 
-    # 【核心修正】新增 handle 方法作為統一入口
-    def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
-        # ... (後續的 try/except 邏輯與您現有的程式碼完全相同)
-        pass
+    def handle(self, event: LocationMessageContent, line_bot_api: MessagingApi) -> None:
+        user_id = event.source.user_id
+        reply_token = event.reply_token
+        latitude = event.message.latitude
+        longitude = event.message.longitude
+        logger.info(f"Received location from user {user_id}: Lat={latitude}, Lon={longitude}")
+
+        pending_query = self.storage_service.get_nearby_query(user_id)
+        if not pending_query:
+            self._reply_error(line_bot_api, reply_token, "感謝您分享位置！如果您想搜尋附近的地點，可以先傳送「尋找附近的美食」喔！")
+            return
+
+        def task():
+            """在背景執行緒中處理耗時的附近地點搜尋"""
+            try:
+                places = self.ai_service.search_location(query=pending_query, is_nearby=True, latitude=latitude, longitude=longitude)
+                if places and places.get("places"):
+                    carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
+                else:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，在您附近找不到「{pending_query}」的相關地點。")]))
+            except Exception as e:
+                logger.error(f"Error in location search background task for user {user_id}: {e}", exc_info=True)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋附近地點時發生錯誤了，請稍後再試。")]))
+
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到您的位置！正在為您尋找附近的「{pending_query}」...")])
+        )
+        threading.Thread(target=task).start()
