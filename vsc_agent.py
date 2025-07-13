@@ -8,6 +8,7 @@ import sys
 import datetime
 import difflib
 import json
+import re
 from pathlib import Path
 
 try:
@@ -76,12 +77,35 @@ def get_ai_response(prompt_text, expect_json=False):
         response = model.generate_content(prompt_text)
         output = response.text
         if expect_json:
-            cleaned_output = output.strip().removeprefix("```json").removesuffix("```").strip()
+            # --- 核心修正：更穩健的 JSON 提取方式 ---
+            # 優先尋找被 ```json ... ``` 包圍的區塊，並處理物件與陣列
+            match = re.search(r"```json\s*([\s\S]+?)\s*```", output)
+            if match:
+                cleaned_output = match.group(1).strip()
+            else:
+                # 如果沒有找到 markdown 區塊，則尋找第一個 '{' 或 '['
+                first_brace = output.find('{')
+                first_bracket = output.find('[')
+                
+                if first_brace == -1: json_start = first_bracket
+                elif first_bracket == -1: json_start = first_brace
+                else: json_start = min(first_brace, first_bracket)
+
+                if json_start != -1:
+                    # 從找到的起點開始，尋找最後一個 '}' 或 ']'
+                    json_end = max(output.rfind('}'), output.rfind(']'))
+                    if json_end > json_start:
+                        cleaned_output = output[json_start:json_end+1]
+                    else:
+                        raise json.JSONDecodeError("在 AI 回應中找不到有效的 JSON 物件。", output, 0)
+                else:
+                    raise json.JSONDecodeError("在 AI 回應中找不到有效的 JSON 物件。", output, 0)
             return json.loads(cleaned_output)
         return output
     except json.JSONDecodeError as e:
         print_color(f"❌ [偵錯] JSON 解析失敗: {e}", "31")
-        print_color(f"   收到的原始文字: '{output[:200]}...'", "31")
+        original_text = e.doc if hasattr(e, 'doc') else (locals().get('output', ''))
+        print_color(f"   收到的原始文字: '{original_text[:200]}...'", "31")
         return None
     except Exception as e:
         print_color(f"❌ 與 Gemini API 溝通時發生錯誤: {e}", "31")
