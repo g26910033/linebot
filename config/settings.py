@@ -5,7 +5,7 @@
 """
 import os
 import json
-from typing import Optional, Type, TypeVar, Any, Dict
+from typing import Optional, Type, TypeVar, Any, Dict, Union, get_args, get_origin
 from dataclasses import dataclass, fields, MISSING, Field
 
 T = TypeVar("T")
@@ -13,7 +13,7 @@ T = TypeVar("T")
 
 
 def _get_config_value(
-    key: str, target_type: Type[T] = str, default: Optional[T] = None, required: bool = True
+    key: str, target_type: Type[T], default: Optional[T] = None, required: bool = True
 ) -> T:
     """
     從環境變數取得配置值，處理型別轉換、預設值和必要性。
@@ -32,14 +32,31 @@ def _get_config_value(
         if required:
             raise ValueError(f"Required environment variable '{key}' is not set.")
         return default
+
+
+    # 處理 Optional[T] 型別，提取其內部的基礎型別
+    origin_type = get_origin(target_type)
+    if origin_type is Union:
+        # Optional[T] 實際上是 Union[T, None]
+        underlying_types = [t for t in get_args(target_type) if t is not type(None)]
+        if underlying_types:
+            actual_type = underlying_types[0]
+        else:
+            actual_type = str
+    else:
+        actual_type = target_type
+
     try:
-        if target_type is bool:
+        if actual_type is bool:
             return value.lower() in ("true", "1", "yes")
-        return target_type(value)
-    except Exception:
+        # 僅當型別為 str 時直接回傳 value，避免 Optional[str] 轉型錯誤
+        if actual_type is str:
+            return value
+        return actual_type(value)
+    except (ValueError, TypeError):
         raise ValueError(
             f"Environment variable '{key}' has an invalid value '{value}' "
-            f"for type {target_type.__name__}."
+            f"for type {actual_type.__name__}."
         )
 
 

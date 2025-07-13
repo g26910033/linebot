@@ -170,12 +170,25 @@ pytest --cov=.
 
 ### 程式碼品質
 ```bash
+
+### 程式碼格式化與靜態檢查
+```bash
 # 格式化程式碼
 black .
-
 # 檢查程式碼風格
 flake8 .
+# 自動排序 import
+isort .
 ```
+
+## 部署與維運
+
+- 建議參考 `DEPLOYMENT.md`、`TROUBLESHOOTING.md`、`Dockerfile.render`、`render.yaml` 取得最佳化部署與排錯指引。
+- 本地測試可用 `scripts/deploy.sh`，依賴修復可用 `scripts/fix-dependencies.py`。
+- Render 平台建議：
+  - Build Command: `pip install --no-cache-dir -r requirements.txt`
+  - Start Command: `gunicorn main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100`
+  - Python Version: 3.11.0
 
 ## 授權
 
@@ -184,3 +197,7 @@ MIT License
 ## 貢獻
 
 歡迎提交 Issue 和 Pull Request 來改善這個專案。
+請遵循下列原則：
+- 請先於 Issue 討論新功能/重大變更
+- PR 請附上測試案例與說明
+- 程式碼需通過格式化與靜態檢查
