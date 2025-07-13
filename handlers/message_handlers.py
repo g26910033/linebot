@@ -18,29 +18,42 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 class MessageHandler:
-    """
-    訊息處理器基類。
-    """
+    """訊息處理器基類。"""
     def __init__(self, ai_service: AIService, storage_service: StorageService) -> None:
         self.ai_service = ai_service
         self.storage_service = storage_service
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
-        """回覆錯誤訊息。"""
         line_bot_api.reply_message_with_http_info(
             ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
         )
-    
-    # ... (此處省略 _create_location_carousel 函式，因為它在您的檔案中已存在且正確)
+
+    def _create_location_carousel(self, places_list, line_bot_api, user_id):
+        # ... (此函式維持不變)
+        pass
 
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
-    # ... (此處省略整個 TextMessageHandler 類別，因為它在您的檔案中已存在且正確)
+    
+    # 【核心修正】新增 handle 方法作為統一入口
+    def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
+        user_message = event.message.text.strip()
+        # ... (後續的 if/elif 判斷邏輯與您現有的程式碼完全相同)
+    
+    # ... (所有 _is_... 和 _handle_... 的輔助函式維持不變)
 
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""
-    # ... (此處省略整個 ImageMessageHandler 類別，因為它在您的檔案中已存在且正確)
+
+    # 【核心修正】新增 handle 方法作為統一入口
+    def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
+        # ... (後續的 try/except 邏輯與您現有的程式碼完全相同)
+        pass
 
 class LocationMessageHandler(MessageHandler):
     """位置訊息處理器"""
-    # ... (此處省略整個 LocationMessageHandler 類別，因為它在您的檔案中已存在且正確)
+
+    # 【核心修正】新增 handle 方法作為統一入口
+    def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
+        # ... (後續的 try/except 邏輯與您現有的程式碼完全相同)
+        pass
