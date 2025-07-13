@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# vsc_agent_pro.py: Final version with debugging logs and interactive project ID prompt.
+# vsc_agent_pro.py: Final stable version using verified models.
 
 import os
 import sys
@@ -15,19 +15,18 @@ try:
     from vertexai.preview.generative_models import GenerativeModel, Part
 except ImportError:
     print("\n[錯誤] 缺少必要的 'google-cloud-aiplatform' 套件。")
-    print("請在您的終端機中執行：pip3 install -r requirements.txt\n")
+    print("請在您的終端機中，啟用 venv 後執行：pip3 install -r requirements.txt\n")
     sys.exit(1)
 
 # --- Helper Functions ---
 
 def print_color(text, color_code):
-    """Prints text in a specified color."""
     print(f"\033[{color_code}m{text}\033[0m")
 
 def get_project_tree():
     tree = []
     exclude_dirs = {'.git', '__pycache__', '.vscode', 'venv', '.venv'}
-    exclude_files = {'.DS_Store', 'vsc_agent.py', 'vsc_agent_pro.py'} # 更新為當前檔名
+    exclude_files = {'.DS_Store', 'vsc_agent.py'}
     for root, dirs, files in os.walk("."):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
         level = root.replace(".", "").count(os.sep)
@@ -74,16 +73,11 @@ def git_push_changes(branch_name, file_paths, commit_message):
 
 def get_ai_response(prompt_text, expect_json=False):
     try:
-        print_color(f"[偵錯] 正在向 Gemini 發送請求...", "90") # 灰色
-        response = text_model.generate_content(prompt_text)
+        response = model.generate_content(prompt_text)
         output = response.text
-        print_color(f"[偵錯] 已收到 Gemini 回應。", "90")
         if expect_json:
             cleaned_output = output.strip().removeprefix("```json").removesuffix("```").strip()
-            print_color(f"[偵錯] 正在解析 JSON...", "90")
-            parsed_json = json.loads(cleaned_output)
-            print_color(f"[偵錯] JSON 解析成功。", "90")
-            return parsed_json
+            return json.loads(cleaned_output)
         return output
     except json.JSONDecodeError as e:
         print_color(f"❌ [偵錯] JSON 解析失敗: {e}", "31")
@@ -97,29 +91,28 @@ def get_ai_response(prompt_text, expect_json=False):
 def plan_changes(project_tree, user_prompt):
     print_color("🤖 正在分析您的需求並規劃修改範圍...", "36")
     prompt = f"""
-You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified.
-Respond with ONLY a JSON array of file paths. Do not include any other text or explanation.
-File structure:\n{project_tree}\n\nUser request: "{user_prompt}"
-"""
+    You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified to fulfill the request.
+    Respond with ONLY a JSON array of file paths. Do not include any other text or explanation.
+    File structure:\n{project_tree}\n\nUser request: "{user_prompt}"
+    """
     return get_ai_response(prompt, expect_json=True)
 
 def execute_changes(project_tree, relevant_files_content, user_prompt):
     print_color("🤖 正在根據您的指令產生修改建議...", "36")
     files_str = "\n\n".join([f"--- START OF FILE: {path} ---\n{content}\n--- END OF FILE: {path} ---" for path, content in relevant_files_content.items()])
     prompt = f"""
-You are an expert pair programmer AI assistant. Your task is to modify the provided code based on the user's request.
-Return all changes in a single JSON object where keys are file paths and values are the complete, updated file content.
-Only include files that you are actually modifying.
-Project file structure for context:\n{project_tree}\n\nUser request: "{user_prompt}"
-Content of relevant files to modify:\n{files_str}
-Your response MUST be a single, raw JSON object.
-"""
+    You are an expert pair programmer AI assistant. Your task is to modify the provided code based on the user's request.
+    Return all changes in a single JSON object where keys are file paths and values are the complete, updated file content.
+    Only include files that you are actually modifying.
+    Project file structure for context:\n{project_tree}\n\nUser request: "{user_prompt}"
+    Content of relevant files to modify:\n{files_str}
+    Your response MUST be a single, raw JSON object.
+    """
     return get_ai_response(prompt, expect_json=True)
 
 # --- Main Agent Logic ---
-
 def project_agent():
-    global text_model
+    global model
     try:
         print_color("正在初始化 Google AI 服務...", "36")
         gcp_project_id = os.getenv("GCP_PROJECT_ID")
@@ -128,9 +121,15 @@ def project_agent():
             if not gcp_project_id:
                 print_color("❌ 未提供 Project ID，程式無法繼續。", "31")
                 sys.exit(1)
+
         vertexai.init(project=gcp_project_id)
-        text_model = GenerativeModel("gemini-2.5-pro")
-        print_color(f"✅ Google AI (Gemini 2.5 Pro) 初始化成功！專案：{gcp_project_id}", "32")
+        
+        # 【核心修正】使用我們已驗證過、最穩定強大的公開模型
+        model_name = "gemini-2.5-flash"
+        model = GenerativeModel(model_name)
+        
+        print_color(f"✅ Google AI 初始化成功！模型：{model_name}，專案：{gcp_project_id}", "32")
+
     except Exception as e:
         print_color(f"❌ Google AI 初始化失敗: {e}", "31")
         sys.exit(1)
@@ -144,16 +143,18 @@ def project_agent():
     project_tree = get_project_tree()
     original_contents = {}
     exclude_dirs = {'.git', '__pycache__', '.vscode', 'venv', '.venv'}
-    exclude_files = {'.DS_Store', 'vsc_agent.py'}
+    exclude_files = {'vsc_agent.py'}
     for root, dirs, files in os.walk("."):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
         for file in files:
-            try:
-                p = Path(root) / file
-                if str(p) in exclude_files or p.is_symlink(): continue
-                with open(p, 'r', encoding='utf-8') as f_content:
-                    original_contents[str(p)] = f_content.read()
-            except (IOError, UnicodeDecodeError): pass
+            p = Path(root) / file
+            if p.is_symlink() or str(p) in exclude_files or any(part in exclude_dirs for part in p.parts):
+                continue
+            if p.is_file():
+                 try:
+                    with open(p, 'r', encoding='utf-8') as f_content:
+                        original_contents[str(p)] = f_content.read()
+                 except (IOError, UnicodeDecodeError): pass
     
     current_contents = original_contents.copy()
     print_color(f"✅ 專案掃描完成，已載入 {len(current_contents)} 個可編輯檔案。", "32")
@@ -162,28 +163,35 @@ def project_agent():
         try:
             user_input = input("🤖 請下達您的專案級指令 (或輸入 !help): ")
             if not user_input.strip(): continue
-            print_color(f"[偵錯] 收到指令: '{user_input}'", "90")
             
             command = user_input.strip().lower()
-            if command == "!quit":
-                break
-            elif command == "!help":
+            if command == "!quit": break
+            if command == "!help":
                 print_color("\n--- 可用指令 ---", "33")
                 print("!help   : 顯示此說明")
                 print("!save   : 將目前所有修改儲存並推送到 GitHub 的一個新分支")
                 print("!quit   : 退出代理程式")
                 print_color("------------------\n", "33")
                 continue
-            elif command == "!save":
-                # ... (save logic)
+            if command == "!save":
+                changed_files = {path: content for path, content in current_contents.items() if original_contents.get(path) != content}
+                if not changed_files:
+                    print_color("🤔 沒有任何修改可以儲存。", "33")
+                    continue
+                branch_name = f"feature/agent-edits-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                commit_message = input("請輸入本次提交的說明 (Commit Message): ")
+                if not commit_message:
+                    commit_message = f"AI-assisted changes based on user prompt"
+                if git_push_changes(branch_name, list(changed_files.keys()), commit_message):
+                    print_color("\n✅ 成功！已將變更推送至新分支。", "32")
+                    break
+                else:
+                    print_color("推送失敗，請檢查終端機中的 Git 錯誤訊息。", "31")
                 continue
 
-            # --- AI Logic ---
-            print_color("[偵錯] 進入 AI 處理區塊...", "90")
             files_to_edit = plan_changes(project_tree, user_input)
-            
             if not files_to_edit or not isinstance(files_to_edit, list):
-                print_color("🤔 AI 規劃失敗或認為不需修改，請嘗試更明確的指令。", "33")
+                print_color("🤔 AI 規劃失敗或認為不需修改。", "33")
                 continue
 
             print_color(f"📝 AI 規劃修改以下檔案: {', '.join(files_to_edit)}", "36")
