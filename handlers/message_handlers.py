@@ -183,8 +183,10 @@ class ImageMessageHandler(MessageHandler):
         def task():
             """在背景執行緒中處理耗時的圖片分析任務"""
             try:
-                # 1. 下載圖片
-                message_content: MessagingApiBlob = line_bot_api.get_message_content(message_id=message_id)
+                # 1. 下載圖片 (核心修正)
+                # 使用 MessagingApiBlob 來下載圖片內容，它需要從 api_client 實例化
+                line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
+                message_content = line_bot_api_blob.get_message_content(message_id=message_id)
                 image_bytes = message_content.content
                 
                 # 2. 進行 AI 分析
@@ -211,7 +213,8 @@ class ImageMessageHandler(MessageHandler):
 class LocationMessageHandler(MessageHandler):
     """位置訊息處理器"""
 
-    def handle(self, event: LocationMessageContent, line_bot_api: MessagingApi) -> None:
+    # 修正 type hint，傳入的 event 是 MessageEvent，其 message 屬性才是 LocationMessageContent
+    def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
         user_id = event.source.user_id
         reply_token = event.reply_token
         latitude = event.message.latitude
