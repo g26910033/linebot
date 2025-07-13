@@ -1,9 +1,8 @@
-line-bot-sdk
+Pillow
+cloudinary
 flask
 google-cloud-aiplatform
-cloudinary
-Pillow
 gunicorn
-waitress
+line-bot-sdk
 redis
-google-cloud-aiplatform
+waitress

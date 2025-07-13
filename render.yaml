@@ -17,14 +17,14 @@ services:
         value: 1
       - key: PYTHONDONTWRITEBYTECODE
         value: 1
-    # 從環境變數面板設定的敏感資訊
-    # LINE_CHANNEL_SECRET
-    # LINE_CHANNEL_ACCESS_TOKEN
-    # GCP_SERVICE_ACCOUNT_JSON
-    # CLOUDINARY_CLOUD_NAME
-    # CLOUDINARY_API_KEY
-    # CLOUDINARY_API_SECRET
-    # REDIS_URL
+      # 從環境變數面板設定的敏感資訊
+      # LINE_CHANNEL_SECRET
+      # LINE_CHANNEL_ACCESS_TOKEN
+      # GCP_SERVICE_ACCOUNT_JSON
+      # CLOUDINARY_CLOUD_NAME
+      # CLOUDINARY_API_KEY
+      # CLOUDINARY_API_SECRET
+      # REDIS_URL
 
   # Redis 服務 (可選，如果不使用外部 Redis)
   - type: redis

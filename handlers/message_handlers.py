@@ -1,4 +1,4 @@
-"""
+    """
 訊息處理器模組
 負責處理不同類型的 LINE 訊息
 """
@@ -28,10 +28,66 @@ class MessageHandler:
         self.ai_service = ai_service
         self.storage_service = storage_service
 
+    def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
+        """回覆錯誤訊息"""
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
+        )
+
+    def _create_location_carousel(self, places_list: List[Dict[str, str]], line_bot_api: MessagingApi, user_id: str) -> None:
+        """建立地點輪播訊息
+        最多顯示 5 個地點。
+        """
+        if not places_list:
+            line_bot_api.push_message(
+                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，找不到符合條件的地點。")])
+            )
+            return
+        
+        columns = []
+        for place in places_list[:5]:  # 最多顯示 5 個地點
+            place_name = place.get("name")
+            place_address = place.get("address")
+            phone_number = place.get("phone_number", "無提供電話")
+            
+            if not all([place_name, place_address]):
+                # Skip if essential information is missing
+                continue
+            
+            encoded_query = quote_plus(f"{place_name} {place_address}")
+            map_url = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
+            
+            display_text = f"{place_address}\n電話：{phone_number}"
+            
+            column = CarouselColumn(
+                title=place_name,
+                text=display_text[:60],  # LINE API 限制文字長度
+                actions=[URIAction(label='在地圖上打開', uri=map_url)]
+            )
+            columns.append(column)
+        
+        if columns:
+            template_message = TemplateMessage(
+                alt_text='為您找到推薦地點！',
+                template=CarouselTemplate(columns=columns)
+            )
+            line_bot_api.push_message(
+                PushMessageRequest(to=user_id, messages=[template_message])
+            )
+        else:
+            # If no valid columns could be created from the places_list
+            line_bot_api.push_message(
+                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，AI 回傳的資料格式有誤，無法為您顯示地點。")])
+            )
+
 
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
-    
+
+    CLEAR_COMMANDS = ["清除對話", "忘記對話", "清除記憶"]
+    DRAW_COMMAND_PREFIX = "畫"
+    SEARCH_COMMAND_PREFIXES = ["搜尋", "尋找"]
+
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
         """處理文字訊息"""
         user_message = event.message.text.strip()
@@ -54,17 +110,15 @@ class TextMessageHandler(MessageHandler):
     
     def _is_clear_command(self, message: str) -> bool:
         """檢查是否為清除對話指令"""
-        clear_keywords = ["清除對話", "忘記對話", "清除記憶"]
-        return message.lower() in [keyword.lower() for keyword in clear_keywords]
+        return message.lower() in [keyword.lower() for keyword in self.CLEAR_COMMANDS]
     
     def _is_draw_command(self, message: str) -> bool:
         """檢查是否為繪圖指令"""
-        return message.startswith("畫")
+        return message.startswith(self.DRAW_COMMAND_PREFIX)
     
     def _is_search_command(self, message: str) -> bool:
         """檢查是否為搜尋指令"""
-        search_keywords = ["搜尋", "尋找"]
-        return any(message.startswith(keyword) for keyword in search_keywords)
+        return any(message.startswith(keyword) for keyword in self.SEARCH_COMMAND_PREFIXES)
     
     def _handle_clear_command(self, line_bot_api: MessagingApi, reply_token: str, user_id: str) -> None:
         """處理清除對話指令"""
@@ -77,7 +131,7 @@ class TextMessageHandler(MessageHandler):
     
     def _handle_draw_command(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, message: str) -> None:
         """處理繪圖指令"""
-        prompt_chinese = message.split("畫", 1)[1].strip()
+        prompt_chinese = message.split(self.DRAW_COMMAND_PREFIX, 1)[1].strip()
         if not prompt_chinese:
             self._reply_error(line_bot_api, reply_token, "請提供繪圖描述，例如：畫 一隻可愛的貓")
             return
@@ -98,6 +152,7 @@ class TextMessageHandler(MessageHandler):
     
     def _process_image_generation(self, line_bot_api: MessagingApi, user_id: str, prompt_chinese: str) -> None:
         """背景處理圖片生成"""
+        logger.info(f"[{user_id}] Starting image generation for prompt: {prompt_chinese[:50]}...")
         try:
             # 翻譯提示詞
             prompt_english = self.ai_service.translate_prompt_for_image_generation(prompt_chinese)
@@ -120,35 +175,55 @@ class TextMessageHandler(MessageHandler):
                             messages=[ImageMessage(original_content_url=image_url, preview_image_url=image_url)]
                         )
                     )
+                    logger.info(f"[{user_id}] Image generated and sent successfully.")
                 else:
                     line_bot_api.push_message(
                         PushMessageRequest(to=user_id, messages=[TextMessage(text=upload_status)])
                     )
+                    logger.warning(f"[{user_id}] Image upload failed: {upload_status}")
             else:
                 line_bot_api.push_message(
                     PushMessageRequest(to=user_id, messages=[TextMessage(text=gen_status)])
                 )
+                logger.warning(f"[{user_id}] Image generation failed: {gen_status}")
                 
         except Exception as e:
-            logger.error(f"Image generation process failed: {e}")
+            logger.error(f"[{user_id}] Image generation process failed: {e}", exc_info=True)
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="圖片生成過程中發生錯誤，請稍後再試。")])
             )
     
     def _handle_search_command(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, message: str) -> None:
         """處理搜尋指令"""
-        query = message.replace("搜尋", "").replace("尋找", "").strip()
+        # Remove search prefixes from the message
+        # Example: "搜尋 台北101" -> "台北101", "尋找 附近 咖啡" -> "附近 咖啡"
+        search_query = message
+        for prefix in self.SEARCH_COMMAND_PREFIXES:
+            if search_query.startswith(prefix):
+                search_query = search_query[len(prefix):].strip()
+                break
         
-        if "附近" in query:
-            self._handle_nearby_search(line_bot_api, reply_token, user_id, query)
+        if not search_query:
+            self._reply_error(line_bot_api, reply_token, "請提供搜尋關鍵字，例如：搜尋 台北101 或 搜尋 附近 餐廳")
+            return
+
+        if "附近" in search_query:
+            # For "附近" searches, we need user's location. Store the query and ask for location.
+            self._handle_nearby_search_prompt(line_bot_api, reply_token, user_id, search_query)
         else:
-            self._handle_location_search(line_bot_api, reply_token, user_id, query)
+            # For direct location searches, proceed directly.
+            self._handle_direct_location_search(line_bot_api, reply_token, user_id, search_query)
     
-    def _handle_nearby_search(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, query: str) -> None:
-        """處理附近搜尋"""
+    def _handle_nearby_search_prompt(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, query: str) -> None:
+        """處理需要用戶分享位置的附近搜尋指令"""
+        # query example: "咖啡附近" or "附近咖啡"
         parts = query.split("附近")
-        search_keyword = (parts[0].strip() or parts[1].strip()) or "餐廳"
-        
+        # Determine the actual keyword to search for, defaulting to "餐廳"
+        # If "咖啡附近", parts=['咖啡', ''], keyword is '咖啡'
+        # If "附近咖啡", parts=['', '咖啡'], keyword is '咖啡'
+        # If "附近", parts=['', ''], keyword defaults to "餐廳"
+        search_keyword = (parts[0].strip() or parts[1].strip()) if len(parts) > 1 else "餐廳"
+
         self.storage_service.set_nearby_query(user_id, search_keyword)
         
         line_bot_api.reply_message_with_http_info(
@@ -158,12 +233,8 @@ class TextMessageHandler(MessageHandler):
             )
         )
     
-    def _handle_location_search(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, query: str) -> None:
-        """處理地點搜尋"""
-        if not query:
-            self._reply_error(line_bot_api, reply_token, "請提供搜尋關鍵字，例如：搜尋 台北101")
-            return
-        
+    def _handle_direct_location_search(self, line_bot_api: MessagingApi, reply_token: str, user_id: str, query: str) -> None:
+        """處理直接地點搜尋指令"""
         line_bot_api.reply_message_with_http_info(
             ReplyMessageRequest(
                 reply_token=reply_token,
@@ -179,12 +250,14 @@ class TextMessageHandler(MessageHandler):
     
     def _process_location_search(self, line_bot_api: MessagingApi, user_id: str, query: str) -> None:
         """背景處理地點搜尋"""
+        logger.info(f"[{user_id}] Starting location search for query: {query}")
         try:
             place_data = self.ai_service.search_location(query)
             self._create_location_carousel([place_data] if place_data else [], line_bot_api, user_id)
+            logger.info(f"[{user_id}] Location search completed.")
             
         except Exception as e:
-            logger.error(f"Location search process failed: {e}")
+            logger.error(f"[{user_id}] Location search process failed: {e}", exc_info=True)
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="搜尋過程中發生錯誤，請稍後再試。")])
             )
@@ -207,56 +280,8 @@ class TextMessageHandler(MessageHandler):
             )
             
         except Exception as e:
-            logger.error(f"Chat process failed: {e}")
+            logger.error(f"[{user_id}] Chat process failed: {e}", exc_info=True)
             self._reply_error(line_bot_api, reply_token, "對話處理時發生錯誤，請稍後再試。")
-    
-    def _create_location_carousel(self, places_list: List[Dict[str, str]], line_bot_api: MessagingApi, user_id: str) -> None:
-        """建立地點輪播訊息"""
-        if not places_list:
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，找不到符合條件的地點。")])
-            )
-            return
-        
-        columns = []
-        for place in places_list[:5]:  # 最多顯示 5 個地點
-            place_name = place.get("name")
-            place_address = place.get("address")
-            phone_number = place.get("phone_number", "無提供電話")
-            
-            if not all([place_name, place_address]):
-                continue
-            
-            encoded_query = quote_plus(f"{place_name} {place_address}")
-            map_url = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
-            
-            display_text = f"{place_address}\n電話：{phone_number}"
-            
-            column = CarouselColumn(
-                title=place_name,
-                text=display_text[:60],  # LINE 限制文字長度
-                actions=[URIAction(label='在地圖上打開', uri=map_url)]
-            )
-            columns.append(column)
-        
-        if columns:
-            template_message = TemplateMessage(
-                alt_text='為您找到推薦地點！',
-                template=CarouselTemplate(columns=columns)
-            )
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[template_message])
-            )
-        else:
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，AI 回傳的資料格式有誤，無法為您顯示地點。")])
-            )
-    
-    def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
-        """回覆錯誤訊息"""
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
-        )
 
 
 class ImageMessageHandler(MessageHandler):
@@ -288,11 +313,12 @@ class ImageMessageHandler(MessageHandler):
             ).start()
             
         except Exception as e:
-            logger.error(f"Image message handling failed: {e}")
+            logger.error(f"[{user_id}] Image message handling failed: {e}", exc_info=True)
             self._reply_error(line_bot_api, reply_token, "圖片處理時發生錯誤")
     
     def _process_image_analysis(self, line_bot_api: MessagingApi, user_id: str, message_id: str) -> None:
         """背景處理圖片分析"""
+        logger.info(f"[{user_id}] Starting image analysis for message_id: {message_id}")
         try:
             # 取得圖片內容
             line_bot_blob_api = MessagingApiBlob(line_bot_api.api_client)
@@ -308,18 +334,13 @@ class ImageMessageHandler(MessageHandler):
                     messages=[TextMessage(text=f"圖片分析結果：\n{analysis_result}")]
                 )
             )
+            logger.info(f"[{user_id}] Image analysis completed.")
             
         except Exception as e:
-            logger.error(f"Image analysis process failed: {e}")
+            logger.error(f"[{user_id}] Image analysis process failed: {e}", exc_info=True)
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="圖片分析過程中發生錯誤，請稍後再試。")])
             )
-    
-    def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
-        """回覆錯誤訊息"""
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
-        )
 
 
 class LocationMessageHandler(MessageHandler):
@@ -332,7 +353,7 @@ class LocationMessageHandler(MessageHandler):
         latitude = event.message.latitude
         longitude = event.message.longitude
         
-        # 取得搜尋關鍵字
+        # 取得搜尋關鍵字 (例如：使用者輸入"搜尋附近咖啡"後，分享位置)
         search_keyword = self.storage_service.get_nearby_query(user_id) or "餐廳"
         
         # 回覆確認訊息
@@ -358,58 +379,16 @@ class LocationMessageHandler(MessageHandler):
         keyword: str
     ) -> None:
         """背景處理附近搜尋"""
+        logger.info(f"[{user_id}] Starting nearby search for keyword: {keyword} at ({latitude}, {longitude})")
+        
         try:
-            logger.info(f"Starting nearby search for user {user_id}, keyword: {keyword}")
-            
             places = self.ai_service.search_nearby_locations(latitude, longitude, keyword)
             self._create_location_carousel(places or [], line_bot_api, user_id)
             
-            logger.info(f"Nearby search completed for user {user_id}")
+            logger.info(f"[{user_id}] Nearby search completed.")
             
         except Exception as e:
-            logger.error(f"Nearby search process failed: {e}")
+            logger.error(f"[{user_id}] Nearby search process failed: {e}", exc_info=True)
             line_bot_api.push_message(
                 PushMessageRequest(to=user_id, messages=[TextMessage(text="附近搜尋過程中發生錯誤，請稍後再試。")])
-            )
-    
-    def _create_location_carousel(self, places_list: List[Dict[str, str]], line_bot_api: MessagingApi, user_id: str) -> None:
-        """建立地點輪播訊息"""
-        if not places_list:
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，找不到符合條件的地點。")])
-            )
-            return
-        
-        columns = []
-        for place in places_list[:5]:  # 最多顯示 5 個地點
-            place_name = place.get("name")
-            place_address = place.get("address")
-            phone_number = place.get("phone_number", "無提供電話")
-            
-            if not all([place_name, place_address]):
-                continue
-            
-            encoded_query = quote_plus(f"{place_name} {place_address}")
-            map_url = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
-            
-            display_text = f"{place_address}\n電話：{phone_number}"
-            
-            column = CarouselColumn(
-                title=place_name,
-                text=display_text[:60],  # LINE 限制文字長度
-                actions=[URIAction(label='在地圖上打開', uri=map_url)]
-            )
-            columns.append(column)
-        
-        if columns:
-            template_message = TemplateMessage(
-                alt_text='為您找到推薦地點！',
-                template=CarouselTemplate(columns=columns)
-            )
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[template_message])
-            )
-        else:
-            line_bot_api.push_message(
-                PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，AI 回傳的資料格式有誤，無法為您顯示地點。")])
             )

@@ -13,7 +13,7 @@ from pathlib import Path
 
 try:
     import vertexai
-    from vertexai.preview.generative_models import GenerativeModel, Part
+    from vertexai.generative_models import GenerativeModel, Part
 except ImportError:
     print("\n[錯誤] 缺少必要的 'google-cloud-aiplatform' 套件。")
     print("請在您的終端機中，啟用 venv 後執行：pip3 install -r requirements.txt\n")
@@ -54,7 +54,7 @@ def print_diff(diff_text):
         elif line.startswith('-'): print_color(line, "31")
         elif line.startswith('^'): print_color(line, "34")
         else: print(line)
-        
+
 def git_push_changes(branch_name, file_paths, commit_message):
     try:
         print_color(f"正在建立新分支: {branch_name}...", "36")
@@ -74,8 +74,14 @@ def git_push_changes(branch_name, file_paths, commit_message):
 
 def get_ai_response(prompt_text, expect_json=False):
     try:
-        response = model.generate_content(prompt_text)
-        output = response.text
+        if expect_json:
+            # 【核心修正】對於可能很長的 JSON 回應使用串流模式，避免回應被截斷
+            responses = model.generate_content(prompt_text, stream=True)
+            output = "".join([response.text for response in responses])
+        else:
+            response = model.generate_content(prompt_text)
+            output = response.text
+
         if expect_json:
             # --- 核心修正：更穩健的 JSON 提取方式 ---
             # 優先尋找被 ```json ... ``` 包圍的區塊，並處理物件與陣列
@@ -115,24 +121,33 @@ def get_ai_response(prompt_text, expect_json=False):
 def plan_changes(project_tree, user_prompt):
     print_color("🤖 正在分析您的需求並規劃修改範圍...", "36")
     prompt = f"""
-    You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified to fulfill the request.
+    You are a senior software architect. Your task is to analyze a user's request and a project's file structure, then determine which files need to be read and potentially modified.
+    Based on the user's request: "{user_prompt}", identify the relevant files.
+    If the request specifies a file type (e.g., ".py", ".md"), ONLY include files of that type.
     Respond with ONLY a JSON array of file paths. Do not include any other text or explanation.
     File structure:\n{project_tree}\n\nUser request: "{user_prompt}"
     """
     return get_ai_response(prompt, expect_json=True)
 
-def execute_changes(project_tree, relevant_files_content, user_prompt):
-    print_color("🤖 正在根據您的指令產生修改建議...", "36")
-    files_str = "\n\n".join([f"--- START OF FILE: {path} ---\n{content}\n--- END OF FILE: {path} ---" for path, content in relevant_files_content.items()])
-    prompt = f"""
-    You are an expert pair programmer AI assistant. Your task is to modify the provided code based on the user's request.
-    Return all changes in a single JSON object where keys are file paths and values are the complete, updated file content.
-    Only include files that you are actually modifying.
-    Project file structure for context:\n{project_tree}\n\nUser request: "{user_prompt}"
-    Content of relevant files to modify:\n{files_str}
-    Your response MUST be a single, raw JSON object.
+def generate_full_modification(file_path, file_content, user_prompt):
     """
-    return get_ai_response(prompt, expect_json=True)
+    要求 AI 針對單一檔案產生修改後的完整內容。
+    """
+    print_color(f"🤖 正在為 {file_path} 產生修改建議...", "36")
+    prompt = f"""
+    You are an expert pair programmer AI assistant. Your task is to modify the single file provided below based on the user's request.
+    Your output MUST be ONLY the complete, updated file content. Do NOT use markdown, JSON, or any other formatting.
+    Just return the raw code for the file.
+
+    User request: "{user_prompt}"
+
+    You are now editing the file: "{file_path}"
+    --- START OF ORIGINAL FILE CONTENT ---
+    {file_content}
+    --- END OF ORIGINAL FILE CONTENT ---
+    """
+    # The AI's entire response is the new content. This is the most robust method.
+    return get_ai_response(prompt, expect_json=False)
 
 # --- Main Agent Logic ---
 def project_agent():
@@ -148,7 +163,7 @@ def project_agent():
 
         vertexai.init(project=gcp_project_id)
         
-        # 【核心修正】使用我們已驗證過、最穩定強大的公開模型
+        # 根據您的要求，設定模型名稱
         model_name = "gemini-2.5-flash"
         model = GenerativeModel(model_name)
         
@@ -193,7 +208,7 @@ def project_agent():
             if command == "!help":
                 print_color("\n--- 可用指令 ---", "33")
                 print("!help   : 顯示此說明")
-                print("!save   : 將目前所有修改儲存並推送到 GitHub 的一個新分支")
+                print("!save : 將目前所有修改儲存並推送到 GitHub 的一個新分支")
                 print("!quit   : 退出代理程式")
                 print_color("------------------\n", "33")
                 continue
@@ -218,37 +233,51 @@ def project_agent():
                 print_color("🤔 AI 規劃失敗或認為不需修改。", "33")
                 continue
 
-            print_color(f"📝 AI 規劃修改以下檔案: {', '.join(files_to_edit)}", "36")
-            relevant_contents = {fp: current_contents[fp] for fp in files_to_edit if fp in current_contents}
+            print_color(f"📝 AI 規劃修改以下檔案: {', '.join(files_to_edit)}\n", "36")
             
-            if not relevant_contents:
-                print_color("❌ 沒有可供修改的相關檔案。", "31")
-                continue
+            accepted_modifications = {}
 
-            modifications = execute_changes(project_tree, relevant_contents, user_input)
-            if not modifications:
-                print_color("🤔 AI 未能產生有效的修改建議。", "33")
-                continue
+            # --- 化整為零：一次處理一個檔案 ---
+            for i, file_path in enumerate(files_to_edit):
+                print_color(f"--- ({i+1}/{len(files_to_edit)}) 正在處理: {file_path} ---", "35")
+                if file_path not in current_contents:
+                    print_color(f"⚠️  警告：規劃修改的檔案 {file_path} 不存在於專案中，已跳過。", "33")
+                    continue
 
-            print_color("\n" + "="*25 + " Gemini 提議的變更 " + "="*25, "94")
-            has_changes = False
-            for file_path, new_content in modifications.items():
-                if file_path in current_contents:
-                    diff = get_diff(current_contents[file_path], new_content, file_path)
-                    if diff:
-                        has_changes = True
-                        print_color(f"\n--- 檔案: {file_path} ---", "33")
-                        print_diff(diff)
-            print_color("="*70 + "\n", "94")
-
-            if not has_changes:
-                print_color("🤔 AI 認為無需修改。", "33")
-                continue
+                original_file_content = current_contents[file_path]
+                new_content = generate_full_modification(file_path, original_file_content, user_input)
                 
-            apply_change = input("是否套用以上所有變更？(y/n): ").lower()
-            if apply_change == 'y':
-                for file_path, new_content in modifications.items():
-                    if file_path in current_contents:
+                if new_content is None:
+                    print_color(f"🤔 AI 未能為 {file_path} 產生有效的修改建議，已跳過。", "33")
+                    continue
+                
+                if new_content == original_file_content:
+                    print_color(f"🤔 AI 認為 {file_path} 無需修改，已跳過。", "33")
+                    continue
+
+                diff = get_diff(original_file_content, new_content, file_path)
+                if not diff.strip():
+                    print_color(f"🤔 AI 認為 {file_path} 無需修改，已跳過。", "33")
+                    continue
+
+                print_color("\n" + "="*25 + f" 對 {file_path} 的提議變更 " + "="*25, "94")
+                print_diff(diff)
+                print_color("="*70 + "\n", "94")
+
+                apply_change = input(f"是否套用對 {file_path} 的變更？(y/n/q) [yes/no/quit all]: ").lower()
+                
+                if apply_change == 'y':
+                    accepted_modifications[file_path] = new_content
+                    print_color(f"✅ 變更已接受並暫存。", "32")
+                elif apply_change == 'q':
+                    print_color("🛑 已中止所有後續修改。", "35")
+                    break 
+                else:
+                    print_color(f"⏭️ 已跳過對 {file_path} 的修改。", "36")
+                print("-" * 70)
+
+            if accepted_modifications:
+                for file_path, new_content in accepted_modifications.items():
                         current_contents[file_path] = new_content
                         with open(file_path, 'w', encoding='utf-8') as f:
                             f.write(new_content)
