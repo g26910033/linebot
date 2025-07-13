@@ -65,8 +65,9 @@ class AIService:
         response = chat_session.send_message(user_message)
         cleaned_text = self.clean_text(response.text)
         
-        # 拆解並回傳更新後的歷史紀錄
-        updated_history = [{"role": c.role, "parts": [{"text": p.text}]} for c in chat_session.history]
+        # 【核心修正】修正 NameError: name 'p' is not defined
+        # 拆解並回傳更新後的歷史紀錄，使用正確的迴圈變數
+        updated_history = [{"role": c.role, "parts": [{"text": part.text} for part in c.parts]} for c in chat_session.history]
         return cleaned_text, updated_history
 
     def analyze_image(self, image_data: bytes):
@@ -79,5 +80,42 @@ class AIService:
         response = self.text_vision_model.generate_content([image_part, prompt])
         return self.clean_text(response.text)
 
-    # ... (此處省略其他 AI 相關函式如 translate_prompt, generate_image, search_location 等)
-    # ... (請確保您將之前 main.py 中的這些工作函式也一併轉移過來)
+    def translate_prompt_for_drawing(self, prompt_in_chinese):
+        """將中文繪圖指令翻譯為英文"""
+        if not self.is_available():
+            return prompt_in_chinese
+        try:
+            translation_prompt = f'Translate the following Traditional Chinese text into a vivid, detailed English prompt for an AI image generation model like Imagen 3: "{prompt_in_chinese}"'
+            response = self.text_vision_model.generate_content(translation_prompt)
+            return self.clean_text(response.text)
+        except Exception as e:
+            logger.error(f"Prompt translation failed: {e}")
+            return prompt_in_chinese
+
+    def generate_image(self, prompt: str):
+        """生成圖片"""
+        if not self.image_gen_model:
+            return None, "圖片生成功能未啟用。"
+        try:
+            response = self.image_gen_model.generate_images(prompt=prompt, number_of_images=1)
+            return response.images[0]._image_bytes, "Vertex AI Imagen 繪圖成功！"
+        except Exception as e:
+            logger.error(f"Vertex AI image generation failed: {e}")
+            return None, f"Vertex AI 畫圖時發生錯誤：{e}"
+
+    def search_location(self, query: str, is_nearby=False, latitude=None, longitude=None):
+        """搜尋地點或周邊"""
+        if not self.is_available():
+            return None
+            
+        if is_nearby:
+            prompt = f"""你是一個專業的在地嚮導... 使用者位置：緯度 {latitude}, 經度 {longitude}, 查詢關鍵字: {query}"""
+        else:
+            prompt = f"""你是一個專業的地點搜尋助理... 使用者查詢的關鍵字是：「{query}」"""
+            
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            return json.loads(self.clean_text(response.text))
+        except Exception as e:
+            logger.error(f"Location search failed for query '{query}': {e}")
+            return None
