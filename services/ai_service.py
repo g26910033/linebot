@@ -1,8 +1,5 @@
-
-
-
 import logging
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 from config.settings import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -201,3 +198,40 @@ class AIService:
         except Exception:
             logger.exception("[manage_chat_history] Error. Original history length: %d", len(history) if history else 0)
             return history if history else []
+
+
+    def chat_with_history(self, message: str, history: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        依據訊息與對話歷史進行 AI 對話。
+        
+        Args:
+            message (str): 使用者訊息。
+            history (Optional[List[Dict[str, Any]]]): 對話歷史。
+
+        Returns:
+            Tuple[str, List[Dict[str, Any]]]: AI 回應與更新後的對話歷史。
+        """
+        if not self._check_model_status():
+            return "AI 服務目前未啟用或設定不完整，無法進行對話。", history or []
+
+        logger.info("[chat_with_history] message='%s' history_length=%d", 
+                   message, len(history) if history else 0)
+
+        try:
+            # 初始化或清理歷史
+            clean_history = self.manage_chat_history(history)
+            
+            # 加入使用者訊息
+            updated_history = clean_history + [{"role": "user", "content": message}]
+            
+            # 生成回應
+            response_text = self.generate_text(message, updated_history)
+            
+            # 加入 AI 回應到歷史
+            updated_history.append({"role": "assistant", "content": response_text})
+            
+            return response_text, updated_history
+            
+        except Exception as e:
+            logger.exception("[chat_with_history] Error processing chat. message='%s'", message)
+            return "對話處理發生錯誤，請稍後再試。", history or []
