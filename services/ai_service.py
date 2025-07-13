@@ -111,15 +111,46 @@ class AIService:
         """搜尋地點或周邊"""
         if not self.is_available():
             return None
-            
+
+        # 定義 AI 必須回傳的 JSON 結構
+        json_structure_prompt = f"""
+        請以 JSON 格式回傳最多 {self.config.max_search_results} 個地點。
+        JSON 格式必須是：
+        {{
+          "places": [
+            {{
+              "displayName": {{ "text": "地點的完整名稱" }},
+              "formattedAddress": "地點的完整地址"
+            }}
+          ]
+        }}
+        如果找不到任何地點，請回傳：
+        {{ "places": [] }}
+        """
+
         if is_nearby:
-            prompt = f"""你是一個專業的在地嚮導... 使用者位置：緯度 {latitude}, 經度 {longitude}, 查詢關鍵字: {query}"""
+            prompt = f"""你是一個專業的在地嚮導。根據以下資訊，找出相關地點。
+            使用者位置：緯度 {latitude}, 經度 {longitude}
+            查詢關鍵字: {query}
+            {json_structure_prompt}
+            """
         else:
-            prompt = f"""你是一個專業的地點搜尋助理... 使用者查詢的關鍵字是：「{query}」"""
+            prompt = f"""你是一個專業的地點搜尋助理。根據以下資訊，找出相關地點。
+            使用者查詢的關鍵字是：「{query}」
+            {json_structure_prompt}
+            """
             
         try:
             response = self.text_vision_model.generate_content(prompt)
-            return json.loads(self.clean_text(response.text))
+            cleaned_response = self.clean_text(response.text)
+            return json.loads(cleaned_response)
+        except json.JSONDecodeError as e:
+            # 為了方便除錯，記錄 AI 回傳的原始文字
+            raw_response_text = "N/A"
+            if 'response' in locals() and hasattr(response, 'text'):
+                raw_response_text = response.text
+            logger.error(f"Location search failed for query '{query}' due to JSONDecodeError: {e}. Raw AI response: '{raw_response_text}'", exc_info=True)
+            return None
         except Exception as e:
-            logger.error(f"Location search failed for query '{query}': {e}")
+            logger.error(f"An unexpected error occurred during location search for query '{query}': {e}", exc_info=True)
             return None

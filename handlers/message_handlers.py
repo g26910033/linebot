@@ -3,6 +3,7 @@
 負責處理不同類型的 LINE 訊息，包含文字、圖片、位置等。
 """
 import threading
+import re
 from urllib.parse import quote_plus
 from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
@@ -159,17 +160,38 @@ class TextMessageHandler(MessageHandler):
 
     def _handle_search_command(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if "附近" in user_message:
-            keyword = user_message.replace("尋找", "").replace("附近", "").strip()
+            # 改善關鍵字提取邏輯，移除贅詞並處理空關鍵字
+            keyword = re.sub(r'^(尋找|搜尋)|附近|的', '', user_message).strip()
+            if not keyword:
+                self._reply_error(line_bot_api, reply_token, "請告訴我要尋找什麼喔！\n格式：`尋找附近的餐廳`")
+                return
+            
             self.storage_service.set_nearby_query(user_id, keyword)
             self._reply_error(line_bot_api, reply_token, f"好的，請分享您的位置，我將為您尋找附近的「{keyword}」。")
         else:
-            query = user_message.replace("搜尋", "").strip()
-            places = self.ai_service.search_location(query)
-            if places and places.get("places"):
-                carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
-                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[carousel]))
-            else:
-                self._reply_error(line_bot_api, reply_token, f"抱歉，找不到關於「{query}」的地點資訊。")
+            # 將一般搜尋也改為非同步模式，避免 reply token 逾時
+            query = re.sub(r'^(尋找|搜尋)', '', user_message).strip()
+            if not query:
+                self._reply_error(line_bot_api, reply_token, "請告訴我要搜尋什麼喔！\n格式：`搜尋台北101`")
+                return
+
+            def task():
+                """在背景執行緒中處理耗時的一般地點搜尋"""
+                try:
+                    places = self.ai_service.search_location(query)
+                    if places and places.get("places"):
+                        carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
+                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
+                    else:
+                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，找不到關於「{query}」的地點資訊。")]))
+                except Exception as e:
+                    logger.error(f"Error in non-nearby search background task for user {user_id}: {e}", exc_info=True)
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋地點時發生錯誤了，請稍後再試。")]))
+
+            line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到指令！正在為您搜尋「{query}」...")])
+            )
+            threading.Thread(target=task).start()
 
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""
