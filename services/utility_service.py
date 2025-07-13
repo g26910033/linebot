@@ -46,10 +46,16 @@ class UtilityService:
     def _get_exchange_rates(self, base_currency: str) -> dict | None:
         """從 API 獲取匯率"""
         try:
-            url = f"https://api.frankfurter.app/latest?from={base_currency.upper()}"
+            # 更換為支援 TWD 的 ExchangeRate-API
+            url = f"https://api.exchangerate-api.com/v4/latest/{base_currency.upper()}"
             response = requests.get(url, timeout=5)
             response.raise_for_status()
-            return response.json().get('rates')
+            data = response.json()
+            if data.get("result") == "success":
+                return data.get('rates')
+            else:
+                logger.error(f"Exchange rate API returned an error: {data.get('error-type')}")
+                return None
         except requests.RequestException as e:
             logger.error(f"Failed to fetch exchange rates: {e}")
             return None

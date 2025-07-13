@@ -16,13 +16,16 @@ class NewsService:
         self.api_key = api_key
         self.base_url = "https://newsapi.org/v2/top-headlines"
 
-    def get_top_headlines(self, country: str = 'tw', category: str = 'general', page_size: int = 5) -> str:
+    def get_top_headlines(self, page_size: int = 5) -> str:
         """
-        獲取指定國家的頭條新聞。
+        獲取台灣相關的頭條新聞。
         """
+        # 改為使用 everything 端點並以關鍵字搜尋
+        self.base_url = "https://newsapi.org/v2/everything"
         params = {
-            'country': country,
-            'category': category,
+            'q': '台灣',
+            'language': 'zh', # 優先顯示中文內容
+            'sortBy': 'publishedAt', # 按發布時間排序
             'pageSize': page_size,
             'apiKey': self.api_key
         }
