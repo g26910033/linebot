@@ -17,8 +17,5 @@ redis==5.0.1
 # Production Server
 gunicorn==21.2.0
 
-# HTTP requests (needed for some dependencies)
-requests==2.31.0
-
-# Additional dependencies for stability
-urllib3==2.0.7
+# HTTP requests - 讓 line-bot-sdk 決定版本
+requests>=2.32.3
