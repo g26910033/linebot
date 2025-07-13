@@ -75,9 +75,9 @@ google-cloud-aiplatform==1.42.1
 ### 1. 建議啟動命令（Gunicorn）
 ```bash
 # 基本
-gunicorn main:app --bind 0.0.0.0:$PORT --workers 2
+gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --workers 2
 # 進階優化
-gunicorn main:app \
+gunicorn "app:create_app()" \
   --bind 0.0.0.0:$PORT \
   --workers 2 \
   --timeout 120 \

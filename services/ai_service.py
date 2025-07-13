@@ -61,14 +61,18 @@ class AIService:
                 if role and parts:
                     reconstructed_history.append(Content(role=role, parts=parts))
 
-        chat_session = self.text_vision_model.start_chat(history=reconstructed_history)
-        response = chat_session.send_message(user_message)
-        cleaned_text = self.clean_text(response.text)
-        
-        # 【核心修正】修正 NameError: name 'p' is not defined
-        # 拆解並回傳更新後的歷史紀錄，使用正確的迴圈變數
-        updated_history = [{"role": c.role, "parts": [{"text": part.text} for part in c.parts]} for c in chat_session.history]
-        return cleaned_text, updated_history
+        try:
+            chat_session = self.text_vision_model.start_chat(history=reconstructed_history)
+            response = chat_session.send_message(user_message)
+            cleaned_text = self.clean_text(response.text)
+            
+            # 拆解並回傳更新後的歷史紀錄
+            updated_history = [{"role": c.role, "parts": [{"text": part.text} for part in c.parts]} for c in chat_session.history]
+            return cleaned_text, updated_history
+        except Exception as e:
+            logger.error(f"Error during chat session with Vertex AI: {e}", exc_info=True)
+            # 當 AI 呼叫失敗時，回傳一個錯誤訊息和「未更新」的歷史紀錄
+            return "抱歉，AI 對話時發生錯誤，請稍後再試。", history
 
     def analyze_image(self, image_data: bytes):
         """分析圖片內容"""

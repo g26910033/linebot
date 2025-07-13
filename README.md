@@ -118,10 +118,10 @@ python main.py
 ### 生產環境
 ```bash
 # 使用 Gunicorn
-gunicorn app:app --bind 0.0.0.0:10000
+gunicorn "app:create_app()" --bind 0.0.0.0:10000
 
 # 或使用 Waitress
-python main.py
+python app.py
 ```
 
 ## API 端點

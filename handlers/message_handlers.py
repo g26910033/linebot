@@ -34,13 +34,91 @@ class MessageHandler:
 
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
-    
-    # 【核心修正】新增 handle 方法作為統一入口
+
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
+        """
+        處理所有文字訊息的統一入口。
+        根據訊息內容分派到不同的處理函式。
+        """
+        user_id = event.source.user_id
+        reply_token = event.reply_token
         user_message = event.message.text.strip()
-        # ... (後續的 if/elif 判斷邏輯與您現有的程式碼完全相同)
-    
-    # ... (所有 _is_... 和 _handle_... 的輔助函式維持不變)
+        logger.info(f"Received text message from user {user_id}: '{user_message}'")
+
+        try:
+            if self._is_draw_command(user_message):
+                logger.debug(f"User {user_id} triggered draw command.")
+                prompt = user_message.replace("畫", "", 1).strip()
+                self._handle_draw_command(prompt, user_id, reply_token, line_bot_api)
+            elif self._is_clear_history_command(user_message):
+                logger.debug(f"User {user_id} triggered clear history command.")
+                self._handle_clear_history(user_id, reply_token, line_bot_api)
+            elif self._is_search_command(user_message):
+                logger.debug(f"User {user_id} triggered search command.")
+                self._handle_search_command(user_message, user_id, reply_token, line_bot_api)
+            else:
+                # 【核心修正】確保所有其他訊息都進入一般對話流程
+                logger.debug(f"User {user_id} triggered general chat.")
+                self._handle_chat(user_message, user_id, reply_token, line_bot_api)
+        except Exception as e:
+            logger.error(f"Error handling text message for user {user_id}: {e}", exc_info=True)
+            self._reply_error(line_bot_api, reply_token, "處理您的訊息時發生了未預期的錯誤，請稍後再試。")
+
+    def _is_draw_command(self, text: str) -> bool:
+        return text.startswith("畫")
+
+    def _is_clear_history_command(self, text: str) -> bool:
+        return text in ["清除對話", "忘記對話", "清除記憶"]
+
+    def _is_search_command(self, text: str) -> bool:
+        return text.startswith("搜尋") or text.startswith("尋找")
+
+    def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        history = self.storage_service.get_chat_history(user_id)
+        ai_response, updated_history = self.ai_service.chat_with_history(user_message, history)
+        self.storage_service.save_chat_history(user_id, updated_history)
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=ai_response)])
+        )
+
+    def _handle_draw_command(self, prompt: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        if not prompt:
+            self._reply_error(line_bot_api, reply_token, "請告訴我要畫什麼喔！\n格式：`畫 一隻可愛的貓`")
+            return
+
+        def task():
+            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")]))
+            translated_prompt = self.ai_service.translate_prompt_for_drawing(prompt)
+            image_bytes, status_msg = self.ai_service.generate_image(translated_prompt)
+            if image_bytes:
+                image_url, upload_status = self.storage_service.upload_image_to_cloudinary(image_bytes)
+                if image_url:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]))
+                else:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")]))
+            else:
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")]))
+
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到繪圖指令！")]))
+        threading.Thread(target=task).start()
+
+    def _handle_clear_history(self, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        self.storage_service.clear_chat_history(user_id)
+        self._reply_error(line_bot_api, reply_token, "好的，我們的對話記憶已經清除！")
+
+    def _handle_search_command(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        if "附近" in user_message:
+            keyword = user_message.replace("尋找", "").replace("附近", "").strip()
+            self.storage_service.set_nearby_query(user_id, keyword)
+            self._reply_error(line_bot_api, reply_token, f"好的，請分享您的位置，我將為您尋找附近的「{keyword}」。")
+        else:
+            query = user_message.replace("搜尋", "").strip()
+            places = self.ai_service.search_location(query)
+            if places and places.get("places"):
+                carousel = self._create_location_carousel(places["places"], line_bot_api, user_id)
+                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[carousel]))
+            else:
+                self._reply_error(line_bot_api, reply_token, f"抱歉，找不到關於「{query}」的地點資訊。")
 
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""
