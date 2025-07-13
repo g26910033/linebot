@@ -8,7 +8,7 @@ echo "🚀 準備部署到 Render..."
 
 # 1. 檢查必要檔案
 echo "📋 檢查部署檔案..."
-required_files=("requirements.txt" "main.py" "render.yaml" "runtime.txt")
+required_files=("requirements.txt" "app.py" "render.yaml" "runtime.txt")
 for file in "${required_files[@]}"; do
     if [ ! -f "$file" ]; then
         echo "❌ 缺少必要檔案: $file" >&2
