@@ -46,8 +46,8 @@ class UtilityService:
     def _get_exchange_rates(self, base_currency: str) -> dict | None:
         """從 API 獲取匯率"""
         try:
-            # 更換為支援 TWD 的 ExchangeRate-API
-            url = f"https://api.exchangerate-api.com/v4/latest/{base_currency.upper()}"
+            # 更換為另一個免費匯率 API: open.er-api.com
+            url = f"https://open.er-api.com/v6/latest/{base_currency.upper()}"
             response = requests.get(url, timeout=5)
             response.raise_for_status()
             data = response.json()
