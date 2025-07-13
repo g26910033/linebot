@@ -224,10 +224,18 @@ class TextMessageHandler(MessageHandler):
             )
             threading.Thread(target=task).start()
 
-    def _handle_url_message(self, url: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+    def _handle_url_message(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if not self.web_service:
             self._reply_error(line_bot_api, reply_token, "抱歉，URL 處理服務目前未啟用。")
             return
+
+        # 提取使用者訊息中的網址
+        url = re.search(r'https?://\S+', user_message)
+        if not url:
+            self._reply_error(line_bot_api, reply_token, "抱歉，訊息中未包含有效的網址。")
+            return
+
+        url = url.group(0)
 
         def task():
             """在背景執行緒中處理耗時的網頁抓取與摘要任務"""
