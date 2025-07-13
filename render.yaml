@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: ai-linebot
+    env: python
+    plan: starter  # 或 standard/pro 根據需求
+    buildCommand: |
+      pip install --upgrade pip
+      pip install --no-cache-dir -r requirements.txt
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --keep-alive 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PIP_NO_CACHE_DIR
+        value: 1
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: PYTHONDONTWRITEBYTECODE
+        value: 1
+    # 從環境變數面板設定的敏感資訊
+    # LINE_CHANNEL_SECRET
+    # LINE_CHANNEL_ACCESS_TOKEN
+    # GCP_SERVICE_ACCOUNT_JSON
+    # CLOUDINARY_CLOUD_NAME
+    # CLOUDINARY_API_KEY
+    # CLOUDINARY_API_SECRET
+    # REDIS_URL
+
+  # Redis 服務 (可選，如果不使用外部 Redis)
+  - type: redis
+    name: ai-linebot-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
