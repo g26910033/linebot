@@ -12,7 +12,7 @@ from utils.logger import get_logger
 # 引入所有需要的 Vertex AI 工具
 import vertexai
 from vertexai.preview.generative_models import GenerativeModel, Part, Content
-from vertexai.preview.vision_models import ImageGenerationModel
+from vertexai.preview.vision_models import Image, ImageGenerationModel
 
 logger = get_logger(__name__)
 
@@ -128,6 +128,25 @@ class AIService:
         except Exception as e:
             logger.error(f"Vertex AI image generation failed: {e}")
             return None, f"Vertex AI 畫圖時發生錯誤：{e}"
+
+    def generate_image_from_image(self, base_image_bytes: bytes, prompt: str):
+        """根據基礎圖片和文字提示生成新圖片"""
+        if not self.image_gen_model:
+            return None, "圖片生成功能未啟用。"
+        try:
+            base_image = Image(image_bytes=base_image_bytes)
+            # 將中文提示翻譯為英文，以獲得更好的效果
+            translated_prompt = self.translate_prompt_for_drawing(prompt)
+            
+            response = self.image_gen_model.edit_image(
+                base_image=base_image,
+                prompt=translated_prompt,
+                number_of_images=1,
+            )
+            return response.images[0]._image_bytes, "以圖生圖成功！"
+        except Exception as e:
+            logger.error(f"Vertex AI image-to-image generation failed: {e}")
+            return None, f"以圖生圖時發生錯誤：{e}"
 
     def search_location(self, query: str, is_nearby=False, latitude=None, longitude=None):
         """搜尋地點或周邊"""

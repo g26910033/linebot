@@ -24,6 +24,8 @@ class StorageService:
     _CHAT_HISTORY_PREFIX: str = "chat_history_"
     _NEARBY_QUERY_PREFIX: str = "nearby_query_"
     _TODO_LIST_PREFIX: str = "todo_list_"
+    _LAST_IMAGE_ID_PREFIX: str = "last_image_id_"
+    _USER_STATE_PREFIX: str = "user_state_"
     _CLOUDINARY_FOLDER: str = "linebot_images"
 
     def __init__(self, config: AppConfig) -> None:
@@ -258,8 +260,54 @@ class StorageService:
             self.redis_client.delete(f"{self._TODO_LIST_PREFIX}{user_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to clear todo list for user {user_id}: {e}")
+            logger.error("Failed to clear todo list for user %s: %s", user_id, e)
             return False
+
+    def set_user_last_image_id(self, user_id: str, message_id: str, ttl: int = 600) -> bool:
+        """儲存使用者最後傳送的圖片 message_id，預設10分鐘後過期"""
+        if not self.is_redis_available():
+            return False
+        try:
+            self.redis_client.set(f"{self._LAST_IMAGE_ID_PREFIX}{user_id}", message_id, ex=ttl)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set last image id for user {user_id}: {e}")
+            return False
+
+    def get_user_last_image_id(self, user_id: str) -> Optional[str]:
+        """取得使用者最後傳送的圖片 message_id"""
+        if not self.is_redis_available():
+            return None
+        try:
+            return self.redis_client.get(f"{self._LAST_IMAGE_ID_PREFIX}{user_id}")
+        except Exception as e:
+            logger.error(f"Failed to get last image id for user {user_id}: {e}")
+            return None
+
+    def set_user_state(self, user_id: str, state: str, ttl: int = 300) -> bool:
+        """設定使用者的當前狀態，例如等待輸入"""
+        if not self.is_redis_available():
+            return False
+        try:
+            self.redis_client.set(f"{self._USER_STATE_PREFIX}{user_id}", state, ex=ttl)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set state for user {user_id}: {e}")
+            return False
+
+    def get_user_state(self, user_id: str, delete: bool = True) -> Optional[str]:
+        """取得並選擇性地刪除使用者的當前狀態"""
+        if not self.is_redis_available():
+            return None
+        key = f"{self._USER_STATE_PREFIX}{user_id}"
+        try:
+            state = self.redis_client.get(key)
+            if state and delete:
+                self.redis_client.delete(key)
+            return state
+        except Exception as e:
+            logger.error(f"Failed to get state for user {user_id}: {e}")
+            return None
 
     def upload_image_to_cloudinary(self, image_data: bytes) -> Tuple[Optional[str], str]:
         """

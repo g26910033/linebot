@@ -10,7 +10,8 @@ from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest,
     TextMessage, ImageMessage, TemplateMessage,
-    CarouselTemplate, CarouselColumn, URIAction
+    CarouselTemplate, CarouselColumn, URIAction,
+    QuickReply, QuickReplyItem, MessageAction as QuickReplyMessageAction
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
 from services.ai_service import AIService
@@ -164,6 +165,21 @@ class TextMessageHandler(MessageHandler):
                 self._handle_help(reply_token, line_bot_api)
                 return
 
+            # 檢查內部圖片處理指令
+            if user_message == "[指令]圖片分析":
+                self._handle_image_analysis(user_id, reply_token, line_bot_api)
+                return
+            
+            if user_message == "[指令]以圖生圖":
+                self._handle_image_to_image_init(user_id, reply_token, line_bot_api)
+                return
+
+            # 檢查使用者是否處於等待輸入圖生圖提示的狀態
+            user_state = self.storage_service.get_user_state(user_id)
+            if user_state == "waiting_image_prompt":
+                self._handle_image_to_image_prompt(user_id, user_message, reply_token, line_bot_api)
+                return
+
             if self._is_draw_command(user_message):
                 logger.debug(f"User {user_id} triggered draw command.")
                 prompt = user_message.replace("畫", "", 1).strip()
@@ -247,11 +263,11 @@ class TextMessageHandler(MessageHandler):
 直接輸入任何文字，開始與我對話。
 
 🎨【AI 繪圖】
-開頭說「畫」，例如：
-`畫一隻在月球上喝茶的貓`
+- `畫 一隻貓`：基本文字生圖。
+- 上傳圖片後點選「以圖生圖」，再輸入提示詞（如：`讓牠變成賽博龐克風格`），即可修改圖片。
 
 🖼️【圖片分析】
-直接傳送任何圖片給我。
+上傳圖片後，點選「圖片分析」。
 
 📍【地點搜尋】
 - `搜尋 台北101`
@@ -281,6 +297,62 @@ class TextMessageHandler(MessageHandler):
 - `清除對話`
         """
         self._reply_error(line_bot_api, reply_token, help_text.strip())
+
+    def _handle_image_analysis(self, user_id: str, reply_token: str, line_bot_api: MessagingApi):
+        message_id = self.storage_service.get_user_last_image_id(user_id)
+        if not message_id:
+            self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請再試一次。")
+            return
+        
+        self._show_loading_animation(user_id)
+        def task():
+            try:
+                line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
+                image_bytes = line_bot_api_blob.get_message_content(message_id=message_id)
+                analysis_result = self.ai_service.analyze_image(image_bytes)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)]))
+            except Exception as e:
+                logger.error(f"Error in image analysis task for user {user_id}: {e}", exc_info=True)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="分析圖片時發生錯誤了。")]))
+        
+        threading.Thread(target=task).start()
+
+    def _handle_image_to_image_init(self, user_id: str, reply_token: str, line_bot_api: MessagingApi):
+        message_id = self.storage_service.get_user_last_image_id(user_id)
+        if not message_id:
+            self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請再試一次。")
+            return
+        
+        self.storage_service.set_user_state(user_id, "waiting_image_prompt")
+        self._reply_error(line_bot_api, reply_token, "好的，請告訴我要如何修改這張圖片？\n（例如：`讓它變成梵谷風格`、`加上一頂帽子`）")
+
+    def _handle_image_to_image_prompt(self, user_id: str, prompt: str, reply_token: str, line_bot_api: MessagingApi):
+        message_id = self.storage_service.get_user_last_image_id(user_id)
+        if not message_id:
+            self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請重新上傳一次。")
+            return
+
+        self._show_loading_animation(user_id, seconds=30)
+        def task():
+            try:
+                line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
+                base_image_bytes = line_bot_api_blob.get_message_content(message_id=message_id)
+                
+                new_image_bytes, status_msg = self.ai_service.generate_image_from_image(base_image_bytes, prompt)
+                
+                if new_image_bytes:
+                    image_url, upload_status = self.storage_service.upload_image_to_cloudinary(new_image_bytes)
+                    if image_url:
+                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]))
+                    else:
+                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")]))
+                else:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"以圖生圖失敗: {status_msg}")]))
+            except Exception as e:
+                logger.error(f"Error in image-to-image task for user {user_id}: {e}", exc_info=True)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="以圖生圖時發生錯誤了。")]))
+
+        threading.Thread(target=task).start()
 
     def _handle_calendar_command(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         # 讓 AI 解析文字
@@ -463,37 +535,28 @@ class ImageMessageHandler(MessageHandler):
         reply_token = event.reply_token
         message_id = event.message.id
         logger.info(f"Received image message from user {user_id}, message_id: {message_id}")
-        
-        self._show_loading_animation(user_id)
 
-        def task():
-            """在背景執行緒中處理耗時的圖片分析任務"""
-            try:
-                # 1. 下載圖片 (核心修正)
-                # 使用 MessagingApiBlob 來下載圖片內容，它需要從 api_client 實例化
-                line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
-                message_content = line_bot_api_blob.get_message_content(message_id=message_id)
-                image_bytes = message_content
-                
-                # 2. 進行 AI 分析
-                analysis_result = self.ai_service.analyze_image(image_bytes)
-                
-                # 3. 推送分析結果
-                line_bot_api.push_message(
-                    PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)])
-                )
-            except Exception as e:
-                logger.error(f"Error in image analysis background task for user {user_id}: {e}", exc_info=True)
-                try:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，分析圖片時發生了一點問題，請稍後再試一次。")]))
-                except Exception as push_e:
-                    logger.error(f"Failed to push error message to user {user_id}: {push_e}", exc_info=True)
+        # 立即回覆，並提供快速回覆選項
+        quick_reply_buttons = QuickReply(items=[
+            QuickReplyItem(action=QuickReplyMessageAction(label="🔍 圖片分析", text="[指令]圖片分析")),
+            QuickReplyItem(action=QuickReplyMessageAction(label="🎨 以圖生圖", text="[指令]以圖生圖")),
+        ])
 
-        # 立即回覆使用者，告知已收到圖片
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片，正在為您分析...")])
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text="收到您的圖片了！請問您想做什麼？", quick_reply=quick_reply_buttons)]
+            )
         )
-        # 啟動背景任務
+
+        # 在背景儲存圖片 message_id
+        def task():
+            try:
+                self.storage_service.set_user_last_image_id(user_id, message_id)
+                logger.info(f"Saved image message_id {message_id} for user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to save image message_id for user {user_id}: {e}", exc_info=True)
+
         threading.Thread(target=task).start()
 
 class LocationMessageHandler(MessageHandler):
