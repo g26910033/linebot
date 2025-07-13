@@ -24,9 +24,15 @@ class MessageHandler:
         self.storage_service = storage_service
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
-        )
+        try:
+            api_response = line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
+            )
+            # 記錄非 200 的狀態碼，以便追蹤 API 錯誤
+            if api_response.status_code != 200:
+                logger.error(f"Error sending reply message. Status: {api_response.status_code}, Body: {api_response.data}")
+        except Exception as e:
+            logger.error(f"Exception when sending reply message: {e}", exc_info=True)
 
     def _create_location_carousel(self, places_list, line_bot_api, user_id):
         # ... (此函式維持不變)
@@ -74,12 +80,27 @@ class TextMessageHandler(MessageHandler):
         return text.startswith("搜尋") or text.startswith("尋找")
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
-        history = self.storage_service.get_chat_history(user_id)
-        ai_response, updated_history = self.ai_service.chat_with_history(user_message, history)
-        self.storage_service.save_chat_history(user_id, updated_history)
+        def task():
+            """在背景執行緒中處理耗時的 AI 對話任務"""
+            try:
+                history = self.storage_service.get_chat_history(user_id)
+                ai_response, updated_history = self.ai_service.chat_with_history(user_message, history)
+                self.storage_service.save_chat_history(user_id, updated_history)
+                line_bot_api.push_message(
+                    PushMessageRequest(to=user_id, messages=[TextMessage(text=ai_response)])
+                )
+            except Exception as e:
+                logger.error(f"Error in chat background task for user {user_id}: {e}", exc_info=True)
+                try:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題，請稍後再試一次。")]))
+                except Exception as push_e:
+                    logger.error(f"Failed to push error message to user {user_id}: {push_e}", exc_info=True)
+
+        # 立即回覆使用者，避免 reply_token 過期
         line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=ai_response)])
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="好的，請稍候...")])
         )
+        threading.Thread(target=task).start()
 
     def _handle_draw_command(self, prompt: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if not prompt:
