@@ -227,7 +227,9 @@ class TextMessageHandler(MessageHandler):
         return any(keyword in text.lower() for keyword in keywords)
 
     def _is_translation_command(self, text: str) -> bool:
-        return text.lower().startswith("翻譯")
+        # 放寬判斷條件，檢查是否包含關鍵字
+        keywords = ["翻譯", "翻成"]
+        return any(keyword in text.lower() for keyword in keywords)
 
     def _is_calendar_command(self, text: str) -> bool:
         # 放寬判斷條件，檢查是否包含關鍵字
@@ -304,18 +306,8 @@ class TextMessageHandler(MessageHandler):
         self._reply_error(line_bot_api, reply_token, reply_text)
 
     def _handle_translation(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
-        # 使用正則表達式解析指令，例如 "翻譯 你好 到 英文"
-        match = re.match(r'翻譯\s+(.+?)\s+(?:到|成)\s+(.+)', user_message, re.IGNORECASE)
-        if not match:
-            self._reply_error(line_bot_api, reply_token, "翻譯指令格式不正確喔！\n請使用：`翻譯 [要翻譯的文字] 到 [目標語言]`\n例如：`翻譯 你好到英文`")
-            return
-
-        text_to_translate, target_language = match.groups()
-        
-        # 進行翻譯
-        translated_text = self.ai_service.translate_text(text_to_translate.strip(), target_language.strip())
-        
-        # 回覆結果
+        # 直接將整個句子交給 AI 處理
+        translated_text = self.ai_service.translate_text(user_message)
         self._reply_error(line_bot_api, reply_token, translated_text)
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:

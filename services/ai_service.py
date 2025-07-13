@@ -177,24 +177,31 @@ class AIService:
             logger.error(f"An unexpected error occurred during location search for query '{query}': {e}", exc_info=True)
             return None
 
-    def translate_text(self, text: str, target_language: str) -> str:
+    def translate_text(self, user_message: str) -> str:
         """
-        使用 AI 模型翻譯文字。
+        使用 AI 模型從自然語言中解析並翻譯文字。
         """
         if not self.is_available():
             return "翻譯服務未啟用。"
-        
+
         prompt = f"""
-        Please act as a professional translator.
-        Translate the following text into {target_language}.
-        Return only the translated text, without any additional explanations or markdown.
-        Text to translate: "{text}"
+        你是一個強大的翻譯助理。你的任務是從使用者的句子中，自動偵測出「要翻譯的內容」和「目標語言」。
+
+        解析規則：
+        1.  句子的任何部分都可能包含要翻譯的內容和目標語言。
+        2.  如果使用者沒有明確指定目標語言，請預設翻譯成「繁體中文」。
+        3.  你的回應必須是**純粹的翻譯結果**，絕對不能包含任何額外的解釋、前言或 markdown 符號。例如，如果使用者說「你好 翻譯英文」，你只能回傳 "Hello"。
+
+        使用者輸入: "{user_message}"
+
+        翻譯結果:
         """
         try:
             response = self.text_vision_model.generate_content(prompt)
-            return self.clean_text(response.text)
+            # 這裡不需要 clean_text，因為提示已經要求純文字
+            return response.text.strip()
         except Exception as e:
-            logger.error(f"Error during translation: {e}", exc_info=True)
+            logger.error(f"Error during smart translation: {e}", exc_info=True)
             return "抱歉，翻譯時發生錯誤。"
 
     def parse_event_from_text(self, text: str) -> dict | None:
