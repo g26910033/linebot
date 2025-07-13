@@ -1,3 +1,4 @@
+"""
 一個人，從頭開始打造一個完整的 AI 服務。
 
 這個模組負責處理所有 AI 相關功能，包括文字生成、圖片生成、圖片分析、地點搜尋和對話歷史管理。
@@ -63,7 +64,7 @@ class AIService:
             logger.info("AI service model is disabled. Skipping AI operation.")
             return False
         if not self.api_key:
-            logger.error("AI service API key is not configured.")
+            logger.error("AI service API key is not configured. Cannot perform AI operations.")
             return False
         # In a real scenario, you might also check self.ai_client for actual initialization
         # if self.ai_client is None:
@@ -128,6 +129,7 @@ class AIService:
         """
         if not self._check_model_status():
             # Return an empty list for consistency if returning URLs
+            logger.info("AI service model is disabled or API key missing. Cannot generate images.")
             return [] 
 
         logger.info(f"Attempting to generate image for description: '{description}'")
@@ -234,10 +236,11 @@ class AIService:
 
     def manage_chat_history(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Processes and optimizes chat history, e.g., reconstructing Part objects.
+        Processes and optimizes chat history for consistency and compatibility with AI models,
+        e.g., reconstructing Part objects or validating structure.
 
         Optimization points:
-        - Robust reconstruction of chat history `Part` objects.
+        - Robust reconstruction/validation of chat history `Part` objects or equivalent structures.
         """
         if not history:
             logger.info("No chat history to manage. Returning empty list.")
@@ -246,42 +249,32 @@ class AIService:
         logger.info(f"Managing and optimizing chat history with {len(history)} items.")
         optimized_history = []
         try:
-            # This is where actual logic for reconstructing Part objects or
-            # cleaning/optimizing history would go.
-            #
-            # Example for reconstructing 'Part' objects (e.g., from Google Generative AI SDK):
-            # from google.generativeai.types import Part
-            # for item in history:
-            #     if isinstance(item, dict) and 'role' in item and 'parts' in item:
-            #         # Assuming 'parts' can be a string or a list of strings/dicts for Part objects
-            #         # This would depend on the specific structure expected by the AI SDK.
-            #         try:
-            #             # If Part expects content directly
-            #             content_parts = item['parts']
-            #             if not isinstance(content_parts, list):
-            #                 content_parts = [content_parts] # Ensure it's a list for iteration
-            #             
-            #             reconstructed_parts = [Part.from_value(p) if not isinstance(p, Part) else p for p in content_parts]
-            #             optimized_history.append({"role": item['role'], "parts": reconstructed_parts})
-            #         except Exception as part_e:
-            #             logger.warning(f"Failed to reconstruct Part object for item: {item}. Error: {part_e}")
-            #             optimized_history.append(item.copy()) # Fallback to original
-            #     else:
-            #         logger.warning(f"Invalid history item format, skipping or appending as-is: {item}")
-            #         optimized_history.append(item.copy() if isinstance(item, dict) else item)
-            # return optimized_history
-
-
-            # For demonstration, just append a copy after basic validation.
-            # This handles cases where items might not be dictionaries robustly.
             for i, item in enumerate(history):
                 if isinstance(item, dict):
-                    # You might add schema validation here for keys like 'role', 'parts'.
-                    # For example, if 'parts' should always be a list:
-                    if 'parts' in item and not isinstance(item['parts'], list) and not isinstance(item['parts'], str):
-                         logger.warning(f"History item {i} has invalid 'parts' format. Expected list or string, got {type(item['parts'])}. Item: {item}")
-                         # Optionally, try to convert or skip
-                         # For now, we'll just append a copy as a fallback
+                    # In a real application, this is where you'd integrate with an AI SDK's
+                    # specific object types, e.g., google.generativeai.types.Part.
+                    # For example:
+                    # from google.generativeai.types import Part
+                    # if 'role' in item and 'parts' in item:
+                    #     try:
+                    #         # Assuming 'parts' can be a single value or a list of values
+                    #         content_parts = item['parts']
+                    #         if not isinstance(content_parts, list):
+                    #             content_parts = [content_parts]
+                    #         reconstructed_parts = [Part.from_value(p) if not isinstance(p, Part) else p for p in content_parts]
+                    #         optimized_history.append({"role": item['role'], "parts": reconstructed_parts})
+                    #     except Exception as part_e:
+                    #         logger.warning(f"Failed to reconstruct Part object for history item {i}: {item}. Error: {part_e}")
+                    #         optimized_history.append(item.copy()) # Fallback
+                    # else:
+                    #     logger.warning(f"History item {i} missing 'role' or 'parts' key. Item: {item}")
+                    #     optimized_history.append(item.copy()) # Fallback
+                    
+                    # For a more generic robustness check, validate the 'parts' field if present.
+                    if 'parts' in item and not isinstance(item['parts'], (list, str)):
+                         logger.warning(f"History item {i} has invalid 'parts' format. Expected list or string, got {type(item['parts']).__name__}. Item: {item}")
+                         # For robust operation, we append a copy, allowing the AI model call to handle it
+                         # or fail gracefully later if the format is truly unacceptable.
                          optimized_history.append(item.copy())
                     else:
                         optimized_history.append(item.copy())
