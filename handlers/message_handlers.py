@@ -187,7 +187,7 @@ class ImageMessageHandler(MessageHandler):
                 # 使用 MessagingApiBlob 來下載圖片內容，它需要從 api_client 實例化
                 line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
                 message_content = line_bot_api_blob.get_message_content(message_id=message_id)
-                image_bytes = message_content.content
+                image_bytes = message_content
                 
                 # 2. 進行 AI 分析
                 analysis_result = self.ai_service.analyze_image(image_bytes)
