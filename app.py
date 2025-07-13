@@ -17,6 +17,7 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageCo
 from config.settings import load_config
 from handlers.message_handlers import TextMessageHandler, ImageMessageHandler, LocationMessageHandler
 from services.ai_service import AIService
+from services.web_service import WebService
 from services.storage_service import StorageService
 from utils.logger import get_logger, setup_root_logger
 
@@ -49,6 +50,7 @@ class LineBotApp:
         # 初始化核心服務
         self.ai_service = AIService(self.config)
         self.storage_service = StorageService(self.config)
+        self.web_service = WebService()
         logger.debug("AI and Storage Services initialized.")
 
         # 初始化 LINE Bot API 客戶端
@@ -58,7 +60,7 @@ class LineBotApp:
         logger.debug("LINE Bot API client initialized.")
 
         # 初始化訊息處理器和 Webhook
-        self.text_handler = TextMessageHandler(self.ai_service, self.storage_service)
+        self.text_handler = TextMessageHandler(self.ai_service, self.storage_service, self.web_service)
         self.image_handler = ImageMessageHandler(self.ai_service, self.storage_service)
         self.location_handler = LocationMessageHandler(self.ai_service, self.storage_service)
         self.handler = WebhookHandler(self.config.line_channel_secret)

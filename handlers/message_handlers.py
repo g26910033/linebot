@@ -13,6 +13,7 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
 from services.ai_service import AIService
+from services.web_service import WebService
 from services.storage_service import StorageService
 from utils.logger import get_logger
 
@@ -20,9 +21,10 @@ logger = get_logger(__name__)
 
 class MessageHandler:
     """訊息處理器基類。"""
-    def __init__(self, ai_service: AIService, storage_service: StorageService) -> None:
+    def __init__(self, ai_service: AIService, storage_service: StorageService, web_service: WebService = None) -> None:
         self.ai_service = ai_service
         self.storage_service = storage_service
+        self.web_service = web_service
 
     def _reply_error(self, line_bot_api: MessagingApi, reply_token: str, error_message: str) -> None:
         try:
@@ -72,6 +74,8 @@ class MessageHandler:
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
 
+    _URL_PATTERN = re.compile(r'https?://\S+')
+
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
         """
         處理所有文字訊息的統一入口。
@@ -93,6 +97,21 @@ class TextMessageHandler(MessageHandler):
             elif self._is_search_command(user_message):
                 logger.debug(f"User {user_id} triggered search command.")
                 self._handle_search_command(user_message, user_id, reply_token, line_bot_api)
+            elif self._is_add_todo_command(user_message):
+                logger.debug(f"User {user_id} triggered add todo command.")
+                item = re.sub(r'^(新增待辦|todo)', '', user_message, flags=re.IGNORECASE).strip()
+                self._handle_add_todo(item, user_id, reply_token, line_bot_api)
+            elif self._is_list_todo_command(user_message):
+                logger.debug(f"User {user_id} triggered list todo command.")
+                self._handle_list_todos(user_id, reply_token, line_bot_api)
+            elif self._is_complete_todo_command(user_message):
+                logger.debug(f"User {user_id} triggered complete todo command.")
+                match = re.search(r'\d+', user_message)
+                item_index = int(match.group(0)) - 1 if match else -1
+                self._handle_complete_todo(item_index, user_id, reply_token, line_bot_api)
+            elif self._is_url_message(user_message):
+                logger.debug(f"User {user_id} sent a URL.")
+                self._handle_url_message(user_message, user_id, reply_token, line_bot_api)
             else:
                 # 【核心修正】確保所有其他訊息都進入一般對話流程
                 logger.debug(f"User {user_id} triggered general chat.")
@@ -109,6 +128,18 @@ class TextMessageHandler(MessageHandler):
 
     def _is_search_command(self, text: str) -> bool:
         return text.startswith("搜尋") or text.startswith("尋找")
+
+    def _is_add_todo_command(self, text: str) -> bool:
+        return text.lower().startswith("新增待辦") or text.lower().startswith("todo")
+
+    def _is_list_todo_command(self, text: str) -> bool:
+        return text in ["待辦清單", "我的待辦", "todo list"]
+
+    def _is_complete_todo_command(self, text: str) -> bool:
+        return text.lower().startswith("完成待辦") or text.lower().startswith("done")
+
+    def _is_url_message(self, text: str) -> bool:
+        return self._URL_PATTERN.match(text) is not None
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         def task():
@@ -192,6 +223,57 @@ class TextMessageHandler(MessageHandler):
                 ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到指令！正在為您搜尋「{query}」...")])
             )
             threading.Thread(target=task).start()
+
+    def _handle_url_message(self, url: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        if not self.web_service:
+            self._reply_error(line_bot_api, reply_token, "抱歉，URL 處理服務目前未啟用。")
+            return
+
+        def task():
+            """在背景執行緒中處理耗時的網頁抓取與摘要任務"""
+            content = self.web_service.fetch_url_content(url)
+            if not content:
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，無法讀取您提供的網址內容。")]))
+                return
+            
+            summary = self.ai_service.summarize_text(content)
+            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=summary)]))
+
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的網址，正在為您摘要文章內容...")])
+        )
+        threading.Thread(target=task).start()
+
+    def _handle_add_todo(self, item: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        if not item:
+            self._reply_error(line_bot_api, reply_token, "請告訴我要新增什麼待辦事項喔！\n格式：`新增待辦 買牛奶`")
+            return
+        if self.storage_service.add_todo_item(user_id, item):
+            self._reply_error(line_bot_api, reply_token, f"好的，已將「{item}」加入您的待辦清單！")
+        else:
+            self._reply_error(line_bot_api, reply_token, "抱歉，新增待辦事項時發生錯誤。")
+
+    def _handle_list_todos(self, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        todo_list = self.storage_service.get_todo_list(user_id)
+        if not todo_list:
+            reply_text = "您的待辦清單是空的！"
+        else:
+            items_text = "\n".join(f"{i+1}. {item}" for i, item in enumerate(todo_list))
+            reply_text = f"您的待辦清單：\n{items_text}"
+        self._reply_error(line_bot_api, reply_token, reply_text)
+
+    def _handle_complete_todo(self, item_index: int, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
+        if item_index < 0:
+            self._reply_error(line_bot_api, reply_token, "請告訴我要完成哪一項喔！\n格式：`完成待辦 1`")
+            return
+
+        removed_item = self.storage_service.remove_todo_item(user_id, item_index)
+
+        if removed_item is not None:
+            self._reply_error(line_bot_api, reply_token, f"太棒了！已完成項目：「{removed_item}」")
+        else:
+            self._reply_error(line_bot_api, reply_token, "找不到您指定的待辦事項，請檢查編號是否正確。")
+
 
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""

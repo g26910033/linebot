@@ -42,13 +42,13 @@ echo "✅ 依賴安裝成功"
 
 # 4. 測試應用程式啟動（匯入 app）
 echo "🧪 測試應用程式..."
-python -c "from main import app; print('✅ 應用程式可以正常匯入')"
+python -c "from app import create_app; app = create_app(); print('✅ 應用程式工廠可以正常呼叫')"
 echo "✅ 應用程式測試通過"
 
 # 5. 顯示建議與結語
 echo "🎉 部署準備完成！"
 echo "📝 請確保在 Render 控制台設定所有環境變數"
 echo "🔗 建議的 Render 設定："
-echo "   - Build Command: pip install --no-cache-dir -r requirements.txt"
-echo "   - Start Command: gunicorn main:app --bind 0.0.0.0:\$PORT --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100"
-echo "   - Python Version: 3.11.0"
+echo "   - Build Command: pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt"
+echo "   - Start Command: gunicorn \"app:create_app()\""
+echo "   - Python Version: 3.11"

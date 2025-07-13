@@ -24,6 +24,7 @@ BASE_PACKAGES: List[str] = [
     "redis>=5.0.0,<6.0.0",
     "gunicorn>=21.0.0,<22.0.0",
     "requests>=2.32.3",
+    "beautifulsoup4>=4.12.0,<5.0.0",
     "urllib3>=2.0.0",
 ]
 

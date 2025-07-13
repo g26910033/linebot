@@ -3,6 +3,7 @@
 儲存服務模組
 負責 Redis 快取與 Cloudinary 圖片上傳，並提供快取/歷史/圖片等高階操作。
 """
+import time
 import json
 import redis
 import cloudinary
@@ -22,6 +23,7 @@ class StorageService:
     """
     _CHAT_HISTORY_PREFIX: str = "chat_history_"
     _NEARBY_QUERY_PREFIX: str = "nearby_query_"
+    _TODO_LIST_PREFIX: str = "todo_list_"
     _CLOUDINARY_FOLDER: str = "linebot_images"
 
     def __init__(self, config: AppConfig) -> None:
@@ -199,6 +201,65 @@ class StorageService:
         except Exception as e:
             logger.error("Failed to get nearby query for user %s: %s", user_id, e)
             return None
+
+    def get_todo_list(self, user_id: str) -> List[str]:
+        """取得用戶的待辦清單"""
+        if not self.is_redis_available():
+            return []
+        try:
+            # LRANGE 0 -1 表示獲取列表所有元素
+            items = self.redis_client.lrange(f"{self._TODO_LIST_PREFIX}{user_id}", 0, -1)
+            return items
+        except Exception as e:
+            logger.error(f"Failed to get todo list for user {user_id}: {e}")
+            return []
+
+    def add_todo_item(self, user_id: str, item: str) -> bool:
+        """新增一個待辦事項到清單尾部"""
+        if not self.is_redis_available():
+            return False
+        try:
+            # RPUSH 將元素添加到列表尾部
+            self.redis_client.rpush(f"{self._TODO_LIST_PREFIX}{user_id}", item)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add todo item for user {user_id}: {e}")
+            return False
+
+    def remove_todo_item(self, user_id: str, item_index: int) -> Optional[str]:
+        """
+        根據索引完成 (移除) 一個待辦事項。
+        Redis 列表操作較複雜，這裡採用 get/set/remove 的方式模擬。
+        """
+        if not self.is_redis_available():
+            return None
+        key = f"{self._TODO_LIST_PREFIX}{user_id}"
+        try:
+            # LINDEX 獲取指定索引的元素
+            item_to_remove = self.redis_client.lindex(key, item_index)
+            if item_to_remove is None:
+                return None # 索引超出範圍
+
+            # LREM 移除指定數量的特定元素。這裡我們用一個唯一的佔位符來確保只刪除一個。
+            # 這是因為 LREM 是按值刪除，如果有多個相同內容的待辦事項，需要精確控制。
+            placeholder = f"__DELETING_{item_to_remove}_{time.time()}__"
+            self.redis_client.lset(key, item_index, placeholder)
+            self.redis_client.lrem(key, 1, placeholder)
+            return item_to_remove
+        except Exception as e:
+            logger.error(f"Failed to remove todo item for user {user_id}: {e}")
+            return None
+
+    def clear_todo_list(self, user_id: str) -> bool:
+        """清除用戶的所有待辦事項"""
+        if not self.is_redis_available():
+            return False
+        try:
+            self.redis_client.delete(f"{self._TODO_LIST_PREFIX}{user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear todo list for user {user_id}: {e}")
+            return False
 
     def upload_image_to_cloudinary(self, image_data: bytes) -> Tuple[Optional[str], str]:
         """

@@ -89,6 +89,21 @@ class AIService:
         response = self.text_vision_model.generate_content([image_part, prompt])
         return self.clean_text(response.text)
 
+    def summarize_text(self, text: str, max_length: int = 50000):
+        """使用 AI 模型總結長篇文章"""
+        if not self.is_available():
+            return "AI 服務未啟用。"
+        
+        # 截斷過長的文本以符合模型限制
+        truncated_text = text[:max_length]
+
+        prompt = f"""請你扮演一位專業的內容分析師。請用繁體中文，為以下文章產生一份約 200-300 字的精簡摘要，並在最後列出 3 個關鍵重點。
+--- 文章開始 ---
+{truncated_text}
+--- 文章結束 ---"""
+        response = self.text_vision_model.generate_content(prompt)
+        return self.clean_text(response.text)
+
     def translate_prompt_for_drawing(self, prompt_in_chinese):
         """將中文繪圖指令翻譯為英文"""
         if not self.is_available():
