@@ -214,6 +214,19 @@ class TextMessageHandler(MessageHandler):
                 self._handle_help(reply_token, line_bot_api)
                 return
 
+            # 新增：處理圖文選單的複合按鈕
+            if user_message == "天氣/新聞":
+                quick_reply = QuickReply(items=[
+                    QuickReplyItem(action=QuickReplyMessageAction(label="🌦️ 看天氣", text="今天天氣如何")),
+                    QuickReplyItem(action=QuickReplyMessageAction(label="📰 看新聞", text="頭條新聞"))
+                ])
+                line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)]))
+                return
+            
+            if user_message == "圖片功能":
+                self._reply_message(line_bot_api, reply_token, "請先上傳一張圖片，然後點選「圖片分析」或「以圖生圖」按鈕喔！")
+                return
+
             # 檢查內部圖片處理指令
             if user_message == "[指令]圖片分析":
                 self._handle_image_analysis(user_id, reply_token, line_bot_api)
