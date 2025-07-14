@@ -4,10 +4,14 @@
 """
 import threading
 
-from linebot.v3.messaging import (
-    MessagingApi, TextMessage, ImageMessage, QuickReply, QuickReplyItem,
-    MessageAction as QuickReplyMessageAction, PushMessageRequest,
-    ReplyMessageRequest)
+from linebot.v3.messaging.api.messaging_api import MessagingApi
+from linebot.v3.messaging.models.text_message import TextMessage
+from linebot.v3.messaging.models.image_message import ImageMessage
+from linebot.v3.messaging.models.quick_reply import QuickReply
+from linebot.v3.messaging.models.quick_reply_item import QuickReplyItem
+from linebot.v3.messaging.models.message_action import MessageAction as QuickReplyMessageAction
+from linebot.v3.messaging.models.push_message_request import PushMessageRequest
+from linebot.v3.messaging.models.reply_message_request import ReplyMessageRequest
 from linebot.v3.webhooks import MessageEvent
 
 from services.storage_service import StorageService
