@@ -180,11 +180,13 @@ class AIIntentHandler:
                 longitude=last_location['longitude']
             )
 
-            if not search_results or not search_results.get('places'):
+            # 明確檢查 places 列表是否存在且不為空
+            places = search_results.get('places')
+            if not places:
                 reply_text = f"抱歉，在您附近找不到關於「{query}」的地點。"
                 message = TextMessage(text=reply_text)
             else:
-                carousel = self._create_location_carousel(search_results['places'])
+                carousel = self._create_location_carousel(places)
                 message = FlexMessage(alt_text=f"為您找到附近的「{query}」", contents=carousel)
 
             push_request = PushMessageRequest(to=user_id, messages=[message])
