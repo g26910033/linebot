@@ -271,3 +271,77 @@ class AIService:
         except Exception as e:
             logger.error(f"Error parsing event from text: {e}", exc_info=True)
             return None
+
+    def parse_stock_symbol_from_text(self, text: str) -> str | None:
+        """
+        從自然語言中解析出股票代碼。
+        """
+        if not self.is_available():
+            return None
+
+        prompt = f"""
+        你是一個金融領域的專家，專門從句子中提取股票代碼。
+        你的任務是分析以下使用者輸入的文字，並找出其中提到的公司或股票代碼。
+
+        解析規則：
+        - 如果句子中包含明確的股票代碼（例如 '2330', 'TSLA', 'AAPL'），直接回傳該代碼。
+        - 如果句子中包含公司名稱（例如「台積電」、「蘋果公司」、「特斯拉」），請回傳該公司最廣為人知的股票代碼。
+        - 如果句子與查詢股價無關，或找不到任何公司/股票代碼，請回傳 "null"。
+        - 你的回應必須是純粹的股票代碼或 "null"，絕對不能包含任何其他文字或 markdown 符號。
+
+        一些常見公司的對應：
+        - 台積電: 2330.TW
+        - 聯發科: 2454.TW
+        - 鴻海: 2317.TW
+        - 蘋果: AAPL
+        - Google: GOOGL
+        - 特斯拉: TSLA
+        - 輝達 (Nvidia): NVDA
+
+        使用者輸入: "{text}"
+
+        股票代碼:
+        """
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            # 使用 clean_text 移除可能的回應標籤，然後檢查是否為 'null'
+            cleaned_response = self.clean_text(response.text)
+            if cleaned_response.lower() == 'null':
+                return None
+            return cleaned_response
+        except Exception as e:
+            logger.error(f"Error parsing stock symbol from text: {e}", exc_info=True)
+            return None
+
+    def parse_weather_query_from_text(self, text: str) -> dict | None:
+        """
+        從自然語言中解析出天氣查詢的城市和類型（即時或預報）。
+        """
+        if not self.is_available():
+            return None
+
+        prompt = f"""
+        你是一個天氣查詢助理。請從使用者的句子中，解析出「城市」和「查詢類型」。
+
+        解析規則：
+        1.  **城市 (city)**: 使用者想要查詢的地點。如果沒有提到具體城市，請回傳 null。
+        2.  **查詢類型 (type)**:
+            - 如果句子中包含「預報」、「未來」、「明天」、「後天」、「這週」等關鍵字，請設為 "forecast"。
+            - 否則，一律設為 "current"。
+        3.  你的回應必須是純粹的 JSON 格式，不包含任何其他文字或 markdown 符號。
+            如果無法解析出城市，請回傳 `{{ "city": null, "type": "current" }}`。
+
+        使用者輸入: "{text}"
+
+        JSON 輸出:
+        """
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            cleaned_response = self.clean_text(response.text)
+            data = json.loads(cleaned_response)
+            if data.get("city"):
+                return data
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing weather query from text: {e}", exc_info=True)
+            return None

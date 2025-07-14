@@ -11,7 +11,7 @@ from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent, PostbackEvent
 
 # 依賴您專案中的其他模組
 from config.settings import load_config
@@ -23,6 +23,7 @@ from services.utility_service import UtilityService
 from services.weather_service import WeatherService
 from services.news_service import NewsService
 from services.calendar_service import CalendarService
+from services.stock_service import StockService
 from utils.logger import get_logger, setup_root_logger
 
 # 引入 Vertex AI 初始化工具
@@ -59,7 +60,8 @@ class LineBotApp:
         self.weather_service = WeatherService(self.config.openweather_api_key)
         self.news_service = NewsService(self.config.news_api_key)
         self.calendar_service = CalendarService()
-        logger.debug("AI, Storage, Web, Utility, Weather, News, and Calendar Services initialized.")
+        self.stock_service = StockService(self.config.finnhub_api_key)
+        logger.debug("AI, Storage, Web, Utility, Weather, News, Calendar, and Stock Services initialized.")
 
         # 初始化 LINE Bot API 客戶端
         self.configuration = Configuration(access_token=self.config.line_channel_access_token)
@@ -75,7 +77,8 @@ class LineBotApp:
             utility_service=self.utility_service,
             weather_service=self.weather_service,
             news_service=self.news_service,
-            calendar_service=self.calendar_service
+            calendar_service=self.calendar_service,
+            stock_service=self.stock_service
         )
         self.image_handler = ImageMessageHandler(self.ai_service, self.storage_service)
         self.location_handler = LocationMessageHandler(self.ai_service, self.storage_service)
@@ -135,6 +138,12 @@ class LineBotApp:
         @self.handler.add(MessageEvent, message=LocationMessageContent)
         def handle_location(event):
             self.location_handler.handle(event, self.line_bot_api)
+
+        @self.handler.add(PostbackEvent)
+        def handle_postback(event):
+            # 暫時將 Postback 交給 TextMessageHandler 處理
+            # 未來若有更複雜的 Postback 邏輯，可以建立專門的 PostbackHandler
+            self.text_handler.handle_postback(event, self.line_bot_api)
 
 # --- 工廠函式與主程式入口 ---
 

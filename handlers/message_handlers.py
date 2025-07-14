@@ -6,14 +6,16 @@ import threading
 import re
 import requests
 from urllib.parse import quote_plus
+from datetime import datetime
 from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest,
     TextMessage, ImageMessage, TemplateMessage,
     CarouselTemplate, CarouselColumn, URIAction,
-    QuickReply, QuickReplyItem, MessageAction as QuickReplyMessageAction
+    QuickReply, QuickReplyItem, MessageAction as QuickReplyMessageAction,
+    FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, ButtonComponent, SeparatorComponent, PostbackAction
 )
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent, PostbackEvent
 from services.ai_service import AIService
 from services.web_service import WebService
 from services.storage_service import StorageService
@@ -21,13 +23,14 @@ from services.utility_service import UtilityService
 from services.weather_service import WeatherService
 from services.news_service import NewsService
 from services.calendar_service import CalendarService
+from services.stock_service import StockService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class MessageHandler:
     """訊息處理器基類。"""
-    def __init__(self, ai_service: AIService, storage_service: StorageService, web_service: WebService = None, utility_service: UtilityService = None, weather_service: WeatherService = None, news_service: NewsService = None, calendar_service: CalendarService = None) -> None:
+    def __init__(self, ai_service: AIService, storage_service: StorageService, web_service: WebService = None, utility_service: UtilityService = None, weather_service: WeatherService = None, news_service: NewsService = None, calendar_service: CalendarService = None, stock_service: StockService = None) -> None:
         self.ai_service = ai_service
         self.storage_service = storage_service
         self.web_service = web_service
@@ -35,23 +38,16 @@ class MessageHandler:
         self.weather_service = weather_service
         self.news_service = news_service
         self.calendar_service = calendar_service
-        self.line_channel_access_token = None # 稍後在 app.py 中設定
+        self.stock_service = stock_service
+        self.line_channel_access_token = None
 
     def _show_loading_animation(self, user_id: str, seconds: int = 10):
-        """顯示 LINE 的載入中動畫"""
         if not self.line_channel_access_token:
             logger.warning("LINE Channel Access Token not set. Skipping loading animation.")
             return
-
         url = "https://api.line.me/v2/bot/chat/loading/start"
-        headers = {
-            "Authorization": f"Bearer {self.line_channel_access_token}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "chatId": user_id,
-            "loadingSeconds": seconds
-        }
+        headers = {"Authorization": f"Bearer {self.line_channel_access_token}", "Content-Type": "application/json"}
+        data = {"chatId": user_id, "loadingSeconds": seconds}
         try:
             response = requests.post(url, headers=headers, json=data, timeout=5)
             if response.status_code != 202:
@@ -64,41 +60,20 @@ class MessageHandler:
             api_response = line_bot_api.reply_message_with_http_info(
                 ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=error_message)])
             )
-            # 記錄非 200 的狀態碼，以便追蹤 API 錯誤
             if api_response.status_code != 200:
                 logger.error(f"Error sending reply message. Status: {api_response.status_code}, Body: {api_response.data}")
         except Exception as e:
             logger.error(f"Exception when sending reply message: {e}", exc_info=True)
 
     def _create_location_carousel(self, places_list: list) -> TemplateMessage | TextMessage:
-        """根據地點列表建立輪播訊息"""
         columns = []
-        # 限制輪播項目數量，最多10個
         for place in places_list[:10]:
             try:
-                title = place.get('displayName', {}).get('text', '地點資訊')
-                # 確保標題長度不超過40個字元
-                title = title[:40]
-
-                address = place.get('formattedAddress', '地址未提供')
-                # 確保地址長度不超過60個字元
-                address = address[:60]
-
-                # 建立 Google Maps 連結
+                title = place.get('displayName', {}).get('text', '地點資訊')[:40]
+                address = place.get('formattedAddress', '地址未提供')[:60]
                 maps_query = quote_plus(f"{title} {address}")
                 maps_url = f"https://www.google.com/maps/search/?api=1&query={maps_query}"
-
-                column = CarouselColumn(
-                    title=title,
-                    text=address,
-                    actions=[
-                        URIAction(
-                            label='在地圖上查看',
-                            uri=maps_url
-                        )
-                    ]
-                )
-                columns.append(column)
+                columns.append(CarouselColumn(title=title, text=address, actions=[URIAction(label='在地圖上查看', uri=maps_url)]))
             except Exception as e:
                 logger.error(f"Error creating carousel column for place {place.get('displayName')}: {e}")
                 continue
@@ -106,20 +81,36 @@ class MessageHandler:
 
 class TextMessageHandler(MessageHandler):
     """文字訊息處理器"""
-
     _URL_PATTERN = re.compile(r'https?://\S+')
 
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
-        """
-        處理所有文字訊息的統一入口。
-        根據訊息內容分派到不同的處理函式。
-        """
         user_id = event.source.user_id
         reply_token = event.reply_token
         user_message = event.message.text.strip()
         logger.info(f"Received text message from user {user_id}: '{user_message}'")
 
         try:
+            # 檢查是否為天氣查詢指令
+            if self.weather_service:
+                weather_query = self.ai_service.parse_weather_query_from_text(user_message)
+                if weather_query and weather_query.get("city"):
+                    city = weather_query["city"]
+                    query_type = weather_query.get("type", "current")
+                    
+                    if query_type == "forecast":
+                        logger.debug(f"User {user_id} triggered weather forecast for city: {city}")
+                        forecast_result = self.weather_service.get_weather_forecast(city)
+                        if isinstance(forecast_result, dict):
+                            carousel = self._create_weather_forecast_carousel(forecast_result)
+                            line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[carousel]))
+                        else:
+                            self._reply_error(line_bot_api, reply_token, forecast_result)
+                    else: # current
+                        logger.debug(f"User {user_id} triggered current weather for city: {city}")
+                        current_weather = self.weather_service.get_current_weather(city)
+                        self._reply_error(line_bot_api, reply_token, current_weather)
+                    return
+
             # 檢查是否為單位換算指令
             if self.utility_service:
                 conversion_result = self.utility_service.parse_and_convert(user_message)
@@ -128,24 +119,21 @@ class TextMessageHandler(MessageHandler):
                     self._reply_error(line_bot_api, reply_token, conversion_result)
                     return
 
-            # 檢查是否為天氣查詢指令
-            if self.weather_service and self._is_weather_command(user_message):
-                city = user_message.replace("天氣", "").strip()
-                if city:
-                    logger.debug(f"User {user_id} triggered weather command for city: {city}")
-                    weather_result = self.weather_service.get_weather(city)
-                    self._reply_error(line_bot_api, reply_token, weather_result)
-                    return
-                else:
-                    self._reply_error(line_bot_api, reply_token, "請告訴我想查詢哪個城市的天氣喔！\n格式：`台北天氣`")
-                    return
-
             # 檢查是否為新聞查詢指令
             if self.news_service and self._is_news_command(user_message):
                 logger.debug(f"User {user_id} triggered news command.")
                 news_result = self.news_service.get_top_headlines()
                 self._reply_error(line_bot_api, reply_token, news_result)
                 return
+
+            # 檢查是否為股市查詢指令
+            if self.stock_service:
+                symbol = self.ai_service.parse_stock_symbol_from_text(user_message)
+                if symbol:
+                    logger.debug(f"User {user_id} triggered stock command for symbol: {symbol} (parsed by AI)")
+                    stock_result = self.stock_service.get_stock_quote(symbol)
+                    self._reply_error(line_bot_api, reply_token, stock_result)
+                    return
 
             # 檢查是否為翻譯指令
             if self._is_translation_command(user_message):
@@ -206,54 +194,51 @@ class TextMessageHandler(MessageHandler):
                 logger.debug(f"User {user_id} sent a URL.")
                 self._handle_url_message(user_message, user_id, reply_token, line_bot_api)
             else:
-                # 【核心修正】確保所有其他訊息都進入一般對話流程
                 logger.debug(f"User {user_id} triggered general chat.")
                 self._handle_chat(user_message, user_id, reply_token, line_bot_api)
         except Exception as e:
             logger.error(f"Error handling text message for user {user_id}: {e}", exc_info=True)
             self._reply_error(line_bot_api, reply_token, "處理您的訊息時發生了未預期的錯誤，請稍後再試。")
 
-    def _is_draw_command(self, text: str) -> bool:
-        return text.startswith("畫")
+    def _is_draw_command(self, text: str) -> bool: return text.startswith("畫")
+    def _is_clear_history_command(self, text: str) -> bool: return text in ["清除對話", "忘記對話", "清除記憶"]
+    def _is_search_command(self, text: str) -> bool: return text.startswith("搜尋") or text.startswith("尋找")
+    def _is_add_todo_command(self, text: str) -> bool: return text.lower().startswith("新增待辦") or text.lower().startswith("todo")
+    def _is_list_todo_command(self, text: str) -> bool: return text in ["待辦清單", "我的待辦", "todo list"]
+    def _is_complete_todo_command(self, text: str) -> bool: return text.lower().startswith("完成待辦") or text.lower().startswith("done")
+    def _is_url_message(self, text: str) -> bool: return self._URL_PATTERN.match(text) is not None
+    def _is_news_command(self, text: str) -> bool: return any(keyword in text.lower() for keyword in ["新聞", "頭條"])
+    def _is_translation_command(self, text: str) -> bool: return any(keyword in text.lower() for keyword in ["翻譯", "翻成"])
+    def _is_calendar_command(self, text: str) -> bool: return any(keyword in text.lower() for keyword in ["提醒我", "新增日曆", "新增行程", "的日曆"])
+    def _is_help_command(self, text: str) -> bool: return text in ["功能說明", "help", "幫助", "指令"]
 
-    def _is_clear_history_command(self, text: str) -> bool:
-        return text in ["清除對話", "忘記對話", "清除記憶"]
-
-    def _is_search_command(self, text: str) -> bool:
-        return text.startswith("搜尋") or text.startswith("尋找")
-
-    def _is_add_todo_command(self, text: str) -> bool:
-        return text.lower().startswith("新增待辦") or text.lower().startswith("todo")
-
-    def _is_list_todo_command(self, text: str) -> bool:
-        return text in ["待辦清單", "我的待辦", "todo list"]
-
-    def _is_complete_todo_command(self, text: str) -> bool:
-        return text.lower().startswith("完成待辦") or text.lower().startswith("done")
-
-    def _is_url_message(self, text: str) -> bool:
-        return self._URL_PATTERN.match(text) is not None
-
-    def _is_weather_command(self, text: str) -> bool:
-        return text.endswith("天氣")
-
-    def _is_news_command(self, text: str) -> bool:
-        # 放寬判斷條件，檢查是否包含關鍵字
-        keywords = ["新聞", "頭條"]
-        return any(keyword in text.lower() for keyword in keywords)
-
-    def _is_translation_command(self, text: str) -> bool:
-        # 放寬判斷條件，檢查是否包含關鍵字
-        keywords = ["翻譯", "翻成"]
-        return any(keyword in text.lower() for keyword in keywords)
-
-    def _is_calendar_command(self, text: str) -> bool:
-        # 放寬判斷條件，檢查是否包含關鍵字
-        keywords = ["提醒我", "新增日曆", "新增行程", "的日曆"]
-        return any(keyword in text.lower() for keyword in keywords)
-
-    def _is_help_command(self, text: str) -> bool:
-        return text in ["功能說明", "help", "幫助", "指令"]
+    def handle_postback(self, event: PostbackEvent, line_bot_api: MessagingApi) -> None:
+        user_id = event.source.user_id
+        reply_token = event.reply_token
+        postback_data = event.postback.data
+        logger.info(f"Received postback from user {user_id}: '{postback_data}'")
+        try:
+            params = dict(p.split('=') for p in postback_data.split('&'))
+            action = params.get('action')
+            if action == 'complete_todo':
+                item_index = int(params.get('index', -1))
+                if item_index >= 0:
+                    removed_item = self.storage_service.remove_todo_item(user_id, item_index)
+                    if removed_item:
+                        line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"太棒了！已完成項目：「{removed_item}」")]))
+                        updated_todo_list = self.storage_service.get_todo_list(user_id)
+                        if updated_todo_list:
+                            flex_message = self._create_todo_list_flex_message(updated_todo_list)
+                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[flex_message]))
+                        else:
+                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="恭喜！所有待辦事項都已完成！")]))
+                    else:
+                        self._reply_error(line_bot_api, reply_token, "抱歉，找不到指定的待辦事項，可能已經被移除了。")
+            else:
+                logger.warning(f"Unhandled postback action '{action}' from user {user_id}")
+        except Exception as e:
+            logger.error(f"Error handling postback for user {user_id}: {e}", exc_info=True)
+            self._reply_error(line_bot_api, reply_token, "處理您的操作時發生了錯誤。")
 
     def _handle_help(self, reply_token: str, line_bot_api: MessagingApi) -> None:
         help_text = """
@@ -274,12 +259,20 @@ class TextMessageHandler(MessageHandler):
 - `尋找附近的咖啡廳` (需分享位置)
 
 🌦️【天氣查詢】
-- `台北天氣`
+- `今天台北天氣如何`
+- `未來幾天東京的天氣預報`
 
 📰【新聞頭條】
 - `新聞` 或 `頭條`
 
-💱【單位/匯率換算】
+📈【股市查詢】
+- `台積電股價` 或 `我想知道TSLA的股價`
+
+✅【互動待辦清單】
+- `新增待辦 買牛奶`
+- `我的待辦` (會顯示可點擊的清單)
+
+【單位/匯率換算】
 - `100公分等於幾公尺`
 - `50 USD to TWD`
 
@@ -287,8 +280,8 @@ class TextMessageHandler(MessageHandler):
 - `提醒我明天下午3點開會`
 - `新增日曆下週五去看電影`
 
-🌐【網頁文章摘要】
-直接貼上網址連結。
+🌐【網頁/YouTube 影片摘要】
+直接貼上網址連結或 YouTube 影片連結。
 
 🗣️【多語言翻譯】
 - `翻譯 你好到英文`
@@ -303,7 +296,6 @@ class TextMessageHandler(MessageHandler):
         if not message_id:
             self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請再試一次。")
             return
-        
         self._show_loading_animation(user_id)
         def task():
             try:
@@ -314,7 +306,6 @@ class TextMessageHandler(MessageHandler):
             except Exception as e:
                 logger.error(f"Error in image analysis task for user {user_id}: {e}", exc_info=True)
                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="分析圖片時發生錯誤了。")]))
-        
         threading.Thread(target=task).start()
 
     def _handle_image_to_image_init(self, user_id: str, reply_token: str, line_bot_api: MessagingApi):
@@ -322,7 +313,6 @@ class TextMessageHandler(MessageHandler):
         if not message_id:
             self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請再試一次。")
             return
-        
         self.storage_service.set_user_state(user_id, "waiting_image_prompt")
         self._reply_error(line_bot_api, reply_token, "好的，請告訴我要如何修改這張圖片？\n（例如：`讓它變成梵谷風格`、`加上一頂帽子`）")
 
@@ -331,15 +321,12 @@ class TextMessageHandler(MessageHandler):
         if not message_id:
             self._reply_error(line_bot_api, reply_token, "抱歉，找不到您剛才傳的圖片，請重新上傳一次。")
             return
-
         self._show_loading_animation(user_id, seconds=30)
         def task():
             try:
                 line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
                 base_image_bytes = line_bot_api_blob.get_message_content(message_id=message_id)
-                
                 new_image_bytes, status_msg = self.ai_service.generate_image_from_image(base_image_bytes, prompt)
-                
                 if new_image_bytes:
                     image_url, upload_status = self.storage_service.upload_image_to_cloudinary(new_image_bytes)
                     if image_url:
@@ -351,68 +338,49 @@ class TextMessageHandler(MessageHandler):
             except Exception as e:
                 logger.error(f"Error in image-to-image task for user {user_id}: {e}", exc_info=True)
                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="以圖生圖時發生錯誤了。")]))
-
         threading.Thread(target=task).start()
 
     def _handle_calendar_command(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
-        # 讓 AI 解析文字
         event_data = self.ai_service.parse_event_from_text(user_message)
-
         if not event_data or not event_data.get('title'):
             self._reply_error(line_bot_api, reply_token, "抱歉，我無法理解您的行程安排，可以說得更清楚一點嗎？")
             return
-
-        # 產生 Google 日曆連結
         calendar_link = self.calendar_service.create_google_calendar_link(event_data)
-
         if not calendar_link:
             self._reply_error(line_bot_api, reply_token, "抱歉，處理您的日曆請求時發生錯誤。")
             return
-        
-        reply_text = (
-            f"好的，我為您準備好日曆連結了！\n\n"
-            f"標題：{event_data.get('title')}\n"
-            f"時間：{event_data.get('start_time')}\n\n"
-            f"請點擊下方連結將它加入您的 Google 日曆：\n{calendar_link}"
-        )
+        reply_text = (f"好的，我為您準備好日曆連結了！\n\n"
+                      f"標題：{event_data.get('title')}\n"
+                      f"時間：{event_data.get('start_time')}\n\n"
+                      f"請點擊下方連結將它加入您的 Google 日曆：\n{calendar_link}")
         self._reply_error(line_bot_api, reply_token, reply_text)
 
     def _handle_translation(self, user_message: str, reply_token: str, line_bot_api: MessagingApi) -> None:
-        # 直接將整個句子交給 AI 處理
         translated_text = self.ai_service.translate_text(user_message)
         self._reply_error(line_bot_api, reply_token, translated_text)
 
     def _handle_chat(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         self._show_loading_animation(user_id)
         def task():
-            """在背景執行緒中處理耗時的 AI 對話任務"""
             try:
                 history = self.storage_service.get_chat_history(user_id)
                 ai_response, updated_history = self.ai_service.chat_with_history(user_message, history)
                 self.storage_service.save_chat_history(user_id, updated_history)
-                line_bot_api.push_message(
-                    PushMessageRequest(to=user_id, messages=[TextMessage(text=ai_response)])
-                )
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=ai_response)]))
             except Exception as e:
                 logger.error(f"Error in chat background task for user {user_id}: {e}", exc_info=True)
                 try:
                     line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題，請稍後再試一次。")]))
                 except Exception as push_e:
                     logger.error(f"Failed to push error message to user {user_id}: {push_e}", exc_info=True)
-
-        # 立即回覆使用者，避免 reply_token 過期
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="好的，請稍候...")])
-        )
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="好的，請稍候...")]))
         threading.Thread(target=task).start()
 
     def _handle_draw_command(self, prompt: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if not prompt:
             self._reply_error(line_bot_api, reply_token, "請告訴我要畫什麼喔！\n格式：`畫 一隻可愛的貓`")
             return
-        
-        self._show_loading_animation(user_id, seconds=30) # 繪圖可能需要更長時間
-
+        self._show_loading_animation(user_id, seconds=30)
         def task():
             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")]))
             translated_prompt = self.ai_service.translate_prompt_for_drawing(prompt)
@@ -425,7 +393,6 @@ class TextMessageHandler(MessageHandler):
                     line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")]))
             else:
                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")]))
-
         line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到繪圖指令！")]))
         threading.Thread(target=task).start()
 
@@ -435,23 +402,18 @@ class TextMessageHandler(MessageHandler):
 
     def _handle_search_command(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if "附近" in user_message:
-            # 改善關鍵字提取邏輯，移除贅詞並處理空關鍵字
             keyword = re.sub(r'^(尋找|搜尋)|附近|的', '', user_message).strip()
             if not keyword:
                 self._reply_error(line_bot_api, reply_token, "請告訴我要尋找什麼喔！\n格式：`尋找附近的餐廳`")
                 return
-            
             self.storage_service.set_nearby_query(user_id, keyword)
             self._reply_error(line_bot_api, reply_token, f"好的，請分享您的位置，我將為您尋找附近的「{keyword}」。")
         else:
-            # 將一般搜尋也改為非同步模式，避免 reply token 逾時
             query = re.sub(r'^(尋找|搜尋)', '', user_message).strip()
             if not query:
                 self._reply_error(line_bot_api, reply_token, "請告訴我要搜尋什麼喔！\n格式：`搜尋台北101`")
                 return
-
             def task():
-                """在背景執行緒中處理耗時的一般地點搜尋"""
                 try:
                     places = self.ai_service.search_location(query)
                     if places and places.get("places"):
@@ -462,38 +424,35 @@ class TextMessageHandler(MessageHandler):
                 except Exception as e:
                     logger.error(f"Error in non-nearby search background task for user {user_id}: {e}", exc_info=True)
                     line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋地點時發生錯誤了，請稍後再試。")]))
-
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到指令！正在為您搜尋「{query}」...")])
-            )
+            line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到指令！正在為您搜尋「{query}」...")]))
             threading.Thread(target=task).start()
 
     def _handle_url_message(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if not self.web_service:
-            self._reply_error(line_bot_api, reply_token, "抱歉，URL 處理服務目前未啟用。")
+            self._reply_error(line_bot_api, reply_token, "抱歉，網頁/影片摘要服務目前未啟用。")
             return
-
-        # 提取使用者訊息中的網址
-        url = re.search(r'https?://\S+', user_message)
-        if not url:
+        url_match = re.search(r'https?://\S+', user_message)
+        if not url_match:
             self._reply_error(line_bot_api, reply_token, "抱歉，訊息中未包含有效的網址。")
             return
-
-        url = url.group(0)
+        url = url_match.group(0)
+        
+        self._show_loading_animation(user_id, seconds=30) # 摘要可能需要較長時間
 
         def task():
-            """在背景執行緒中處理耗時的網頁抓取與摘要任務"""
-            content = self.web_service.fetch_url_content(url)
-            if not content:
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，無法讀取您提供的網址內容。")]))
-                return
-            
-            summary = self.ai_service.summarize_text(content)
-            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=summary)]))
+            try:
+                content = self.web_service.fetch_url_content(url)
+                if not content:
+                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，無法讀取您提供的網址內容。")]))
+                    return
+                
+                summary = self.ai_service.summarize_text(content)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=summary)]))
+            except Exception as e:
+                logger.error(f"Error in URL message handling task for user {user_id}: {e}", exc_info=True)
+                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，摘要網頁/影片內容時發生錯誤了，請稍後再試。")]))
 
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的網址，正在為您摘要文章內容...")])
-        )
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的網址，正在為您摘要內容...")]))
         threading.Thread(target=task).start()
 
     def _handle_add_todo(self, item: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
@@ -508,75 +467,91 @@ class TextMessageHandler(MessageHandler):
     def _handle_list_todos(self, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         todo_list = self.storage_service.get_todo_list(user_id)
         if not todo_list:
-            reply_text = "您的待辦清單是空的！"
+            self._reply_error(line_bot_api, reply_token, "您的待辦清單是空的！")
         else:
-            items_text = "\n".join(f"{i+1}. {item}" for i, item in enumerate(todo_list))
-            reply_text = f"您的待辦清單：\n{items_text}"
-        self._reply_error(line_bot_api, reply_token, reply_text)
+            flex_message = self._create_todo_list_flex_message(todo_list)
+            try:
+                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[flex_message]))
+            except Exception as e:
+                logger.error(f"Failed to send Flex Message: {e}", exc_info=True)
+                self._reply_error(line_bot_api, reply_token, "抱歉，顯示待辦清單時發生錯誤。")
 
     def _handle_complete_todo(self, item_index: int, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
         if item_index < 0:
             self._reply_error(line_bot_api, reply_token, "請告訴我要完成哪一項喔！\n格式：`完成待辦 1`")
             return
-
         removed_item = self.storage_service.remove_todo_item(user_id, item_index)
-
         if removed_item is not None:
             self._reply_error(line_bot_api, reply_token, f"太棒了！已完成項目：「{removed_item}」")
         else:
             self._reply_error(line_bot_api, reply_token, "找不到您指定的待辦事項，請檢查編號是否正確。")
 
+    def _create_todo_list_flex_message(self, todo_list: list) -> FlexSendMessage:
+        header = BoxComponent(layout='vertical', contents=[TextComponent(text='📝 您的待辦清單', weight='bold', size='xl', color='#1DB446')])
+        body_contents = []
+        for i, item in enumerate(todo_list[:10]):
+            body_contents.append(BoxComponent(layout='horizontal', spacing='md', contents=[
+                TextComponent(text=f"{i+1}. {item}", wrap=True, flex=4),
+                ButtonComponent(action=PostbackAction(label='完成', data=f'action=complete_todo&index={i}', display_text=f'完成待辦 {i+1}'), style='primary', color='#1DB446', height='sm', flex=1)
+            ]))
+            if i < len(todo_list[:10]) - 1:
+                body_contents.append(SeparatorComponent(margin='md'))
+        if len(todo_list) > 10:
+            body_contents.append(SeparatorComponent(margin='md'))
+            body_contents.append(TextComponent(text=f"...還有 {len(todo_list) - 10} 個項目未顯示。", size='sm', color='#999999', wrap=True))
+        bubble = BubbleContainer(header=header, body=BoxComponent(layout='vertical', spacing='md', contents=body_contents))
+        return FlexSendMessage(alt_text="您的待辦清單", contents=bubble)
+
+    def _create_weather_forecast_carousel(self, forecast_data: dict) -> TemplateMessage:
+        city_name = forecast_data.get("city", "未知城市")
+        columns = []
+        for daily_data in forecast_data.get("forecasts", []):
+            date = datetime.fromtimestamp(daily_data['dt'])
+            date_str = date.strftime('%m/%d')
+            weekday_str = ["一", "二", "三", "四", "五", "六", "日"][date.weekday()]
+            icon_url = f"https://openweathermap.org/img/wn/{daily_data['icon']}@2x.png"
+            column = CarouselColumn(
+                thumbnail_image_url=icon_url,
+                title=f"{date_str} (週{weekday_str})",
+                text=f"{daily_data['description']}\n溫度: {daily_data['temp_min']:.0f}°C - {daily_data['temp_max']:.0f}°C",
+                actions=[URIAction(label='查看詳情', uri=f"https://www.google.com/search?q={quote_plus(f'{city_name} 天氣')}")]
+            )
+            columns.append(column)
+        return TemplateMessage(alt_text=f'{city_name} 的天氣預報', template=CarouselTemplate(columns=columns[:10]))
 
 class ImageMessageHandler(MessageHandler):
     """圖片訊息處理器"""
-
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
         user_id = event.source.user_id
         reply_token = event.reply_token
         message_id = event.message.id
         logger.info(f"Received image message from user {user_id}, message_id: {message_id}")
-
-        # 立即回覆，並提供快速回覆選項
         quick_reply_buttons = QuickReply(items=[
             QuickReplyItem(action=QuickReplyMessageAction(label="🔍 圖片分析", text="[指令]圖片分析")),
             QuickReplyItem(action=QuickReplyMessageAction(label="🎨 以圖生圖", text="[指令]以圖生圖")),
         ])
-
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text="收到您的圖片了！請問您想做什麼？", quick_reply=quick_reply_buttons)]
-            )
-        )
-
-        # 在背景儲存圖片 message_id
+        line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="收到您的圖片了！請問您想做什麼？", quick_reply=quick_reply_buttons)]))
         def task():
             try:
                 self.storage_service.set_user_last_image_id(user_id, message_id)
                 logger.info(f"Saved image message_id {message_id} for user {user_id}")
             except Exception as e:
                 logger.error(f"Failed to save image message_id for user {user_id}: {e}", exc_info=True)
-
         threading.Thread(target=task).start()
 
 class LocationMessageHandler(MessageHandler):
     """位置訊息處理器"""
-
-    # 修正 type hint，傳入的 event 是 MessageEvent，其 message 屬性才是 LocationMessageContent
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
         user_id = event.source.user_id
         reply_token = event.reply_token
         latitude = event.message.latitude
         longitude = event.message.longitude
         logger.info(f"Received location from user {user_id}: Lat={latitude}, Lon={longitude}")
-
         pending_query = self.storage_service.get_nearby_query(user_id)
         if not pending_query:
             self._reply_error(line_bot_api, reply_token, "感謝您分享位置！如果您想搜尋附近的地點，可以先傳送「尋找附近的美食」喔！")
             return
-
         def task():
-            """在背景執行緒中處理耗時的附近地點搜尋"""
             try:
                 places = self.ai_service.search_location(query=pending_query, is_nearby=True, latitude=latitude, longitude=longitude)
                 if places and places.get("places"):
@@ -587,8 +562,5 @@ class LocationMessageHandler(MessageHandler):
             except Exception as e:
                 logger.error(f"Error in location search background task for user {user_id}: {e}", exc_info=True)
                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋附近地點時發生錯誤了，請稍後再試。")]))
-
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到您的位置！正在為您尋找附近的「{pending_query}」...")])
-        )
+        line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=f"收到您的位置！正在為您尋找附近的「{pending_query}」...")]))
         threading.Thread(target=task).start()

@@ -4,6 +4,7 @@
 """
 import requests
 from utils.logger import get_logger
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -14,8 +15,9 @@ class WeatherService:
         if not api_key:
             raise ValueError("OpenWeatherMap API key is required.")
         self.api_key = api_key
-        self.base_url = "http://api.openweathermap.org/data/2.5/weather"
-        self.geo_url = "http://api.openweathermap.org/geo/1.0/direct"
+        self.current_weather_url = "https://api.openweathermap.org/data/2.5/weather"
+        self.forecast_url = "https://api.openweathermap.org/data/2.5/forecast"
+        self.geo_url = "https://api.openweathermap.org/geo/1.0/direct"
 
     def _get_coordinates(self, city_name: str) -> dict | None:
         """使用城市名稱獲取經緯度。"""
@@ -38,8 +40,8 @@ class WeatherService:
             logger.error(f"Error parsing coordinate data for {city_name}: {e}")
             return None
 
-    def get_weather(self, city_name: str) -> str:
-        """獲取指定城市的天氣資訊。"""
+    def get_current_weather(self, city_name: str) -> str:
+        """獲取指定城市的「即時」天氣資訊。"""
         coords = self._get_coordinates(city_name)
         if not coords:
             return f"抱歉，找不到「{city_name}」這個地點的資訊。"
@@ -48,32 +50,64 @@ class WeatherService:
             'lat': coords['lat'],
             'lon': coords['lon'],
             'appid': self.api_key,
-            'units': 'metric',  # 使用攝氏溫度
-            'lang': 'zh_tw'     # 結果使用繁體中文
+            'units': 'metric',
+            'lang': 'zh_tw'
         }
         try:
-            response = requests.get(self.base_url, params=params, timeout=5)
+            response = requests.get(self.current_weather_url, params=params, timeout=5)
             response.raise_for_status()
-            weather_data = response.json()
-
-            # 解析並格式化天氣資訊
-            description = weather_data['weather'][0]['description']
-            temp = weather_data['main']['temp']
-            feels_like = weather_data['main']['feels_like']
-            humidity = weather_data['main']['humidity']
-            wind_speed = weather_data['wind']['speed']
-
-            return (
-                f"「{city_name}」目前的天氣資訊：\n"
-                f"天氣狀況：{description}\n"
-                f"溫度：{temp}°C\n"
-                f"體感溫度：{feels_like}°C\n"
-                f"濕度：{humidity}%\n"
-                f"風速：{wind_speed} m/s"
-            )
+            data = response.json()
+            desc = data['weather'][0]['description']
+            temp = data['main']['temp']
+            return f"「{city_name}」現在的天氣是 {desc}，溫度 {temp}°C。"
         except requests.RequestException as e:
-            logger.error(f"Failed to get weather for {city_name}: {e}")
-            return "抱歉，無法獲取天氣資訊，請稍後再試。"
+            logger.error(f"Failed to get current weather for {city_name}: {e}")
+            return "抱歉，無法獲取即時天氣資訊，請稍後再試。"
         except (IndexError, KeyError) as e:
-            logger.error(f"Error parsing weather data for {city_name}: {e}")
-            return "抱歉，解析天氣資料時發生錯誤。"
+            logger.error(f"Error parsing current weather data for {city_name}: {e}")
+            return "抱歉，解析即時天氣資料時發生錯誤。"
+
+    def get_weather_forecast(self, city_name: str) -> dict | str:
+        """獲取指定城市的「五日」天氣預報。"""
+        coords = self._get_coordinates(city_name)
+        if not coords:
+            return f"抱歉，找不到「{city_name}」這個地點的資訊。"
+
+        params = {
+            'lat': coords['lat'],
+            'lon': coords['lon'],
+            'appid': self.api_key,
+            'units': 'metric',
+            'lang': 'zh_tw'
+        }
+        try:
+            response = requests.get(self.forecast_url, params=params, timeout=5)
+            response.raise_for_status()
+            forecast_data = response.json()
+
+            # 處理並簡化預報資料，每天只取一筆中午的資料
+            daily_forecasts = {}
+            for item in forecast_data.get('list', []):
+                date_str = datetime.fromtimestamp(item['dt']).strftime('%Y-%m-%d')
+                # 只選擇每天最接近中午 12:00 的預報
+                if date_str not in daily_forecasts or abs(datetime.fromtimestamp(item['dt']).hour - 12) < abs(datetime.fromtimestamp(daily_forecasts[date_str]['dt']).hour - 12):
+                    daily_forecasts[date_str] = {
+                        'dt': item['dt'],
+                        'temp': item['main']['temp'],
+                        'temp_min': item['main']['temp_min'],
+                        'temp_max': item['main']['temp_max'],
+                        'description': item['weather'][0]['description'],
+                        'icon': item['weather'][0]['icon']
+                    }
+            
+            # 轉換為列表並排序
+            sorted_forecasts = sorted(daily_forecasts.values(), key=lambda x: x['dt'])
+            
+            return {"city": city_name, "forecasts": sorted_forecasts}
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to get weather forecast for {city_name}: {e}")
+            return "抱歉，無法獲取天氣預報資訊，請稍後再試。"
+        except (IndexError, KeyError) as e:
+            logger.error(f"Error parsing weather forecast data for {city_name}: {e}")
+            return "抱歉，解析天氣預報資料時發生錯誤。"
