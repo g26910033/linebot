@@ -3,8 +3,7 @@ AI 核心服務模組
 負責與 Google Vertex AI 的基本互動，包含模型初始化和歷史對話。
 """
 import re
-from vertexai.generative_models import (
-    GenerativeModel, Part, Content, GenerationConfig, HarmCategory, HarmBlockThreshold)
+from vertexai.generative_models import GenerativeModel, Part, Content
 from config.settings import AppConfig
 from utils.logger import get_logger
 
@@ -25,32 +24,9 @@ class AICoreService:
         """根據設定初始化所有 AI 模型"""
         try:
             if self.config.text_model_name:
-                # 確保使用完整的模型路徑，包含專案 ID
-                model_path = (
-                    f"projects/{self.config.gcp_project_id}/locations/"
-                    f"{self.config.gcp_location}/publishers/google/models/"
-                    f"{self.config.text_model_name}"
-                )
-                generation_config = GenerationConfig(
-                    temperature=0.7,
-                    top_p=1.0,
-                    top_k=32,
-                    candidate_count=1,
-                    max_output_tokens=2048,
-                )
-                safety_settings = {
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
-                self.text_vision_model = GenerativeModel(
-                    model_path,
-                    generation_config=generation_config,
-                    safety_settings=safety_settings
-                )
+                self.text_vision_model = GenerativeModel(self.config.text_model_name)
                 logger.info(
-                    f"Text/Vision model '{model_path}' loaded for AICoreService.")
+                    f"Text/Vision model '{self.config.text_model_name}' loaded for AICoreService.")
         except Exception as e:
             logger.error(
                 f"AICoreService model initialization failed: {e}",
