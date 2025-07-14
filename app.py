@@ -129,51 +129,49 @@ class LineBotApp:
     def _setup_default_rich_menu(self):
         """使用 line-bot-sdk 檢查並設定預設的圖文選單。"""
         rich_menu_name = "Default Rich Menu"
+        logger.info("--- Starting Rich Menu Setup ---")
         try:
-            # --- 路徑處理 ---
+            # --- Step 0: Path Handling ---
             base_dir = os.path.dirname(os.path.abspath(__file__))
             json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
-            png_path = os.path.join(
-                base_dir, 'scripts', 'rich_menu_background.png')
-            logger.info(f"Attempting to set up rich menu '{rich_menu_name}'...")
-            logger.info(f"JSON path: {json_path}")
-            logger.info(f"PNG path: {png_path}")
+            png_path = os.path.join(base_dir, 'scripts', 'rich_menu_background.png')
+            logger.info(f"JSON path: {json_path}, PNG path: {png_path}")
+            if not os.path.exists(json_path) or not os.path.exists(png_path):
+                logger.error("Rich menu files not found. Aborting setup.")
+                return
 
-            # 1. 刪除所有同名的舊選單
+            # --- Step 1: Delete Old Menus ---
+            logger.info("Step 1: Deleting old rich menus...")
             try:
                 rich_menu_list = self.line_bot_api.get_rich_menu_list()
                 for menu in rich_menu_list.richmenus:
                     if menu.name == rich_menu_name:
-                        logger.info(f"Deleting old rich menu: {menu.rich_menu_id}")
+                        logger.info(f"Deleting old menu: {menu.rich_menu_id}")
                         self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
+                logger.info("Step 1 finished.")
             except ApiException as e:
-                logger.warning(f"Could not fetch or delete rich menus: {e}. This might be normal if no menus exist.")
+                logger.warning(f"Could not fetch/delete rich menus: {e}. This is normal if no menus exist.")
 
-
-            # 2. 建立新的圖文選單
-            logger.info(f"Creating new rich menu: '{rich_menu_name}'")
+            # --- Step 2: Create New Menu ---
+            logger.info("Step 2: Creating new rich menu...")
             with open(json_path, 'r', encoding='utf-8') as f:
                 rich_menu_json = json.load(f)
             rich_menu_json['name'] = rich_menu_name
             rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
-            
-            rich_menu_id = self.line_bot_api.create_rich_menu(
-                rich_menu_request=rich_menu_to_create)
-            logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
+            rich_menu_id = self.line_bot_api.create_rich_menu(rich_menu_request=rich_menu_to_create)
+            logger.info(f"Step 2 finished. New menu ID: {rich_menu_id}")
 
-            # 3. 上傳圖片
-            logger.info(f"Uploading image for rich menu ID: {rich_menu_id}")
-            api_blob = MessagingApiBlob(self.api_client)
+            # --- Step 3: Upload Image ---
+            logger.info(f"Step 3: Uploading image for menu ID: {rich_menu_id}")
             with open(png_path, 'rb') as f:
-                api_blob.upload_rich_menu_image(
-                    rich_menu_id=rich_menu_id, body=f.read(),
-                    _headers={'Content-Type': 'image/png'})
-            logger.info("Rich menu image uploaded successfully.")
+                self.line_bot_api.upload_rich_menu_image(
+                    rich_menu_id=rich_menu_id, body=f.read(), _headers={'Content-Type': 'image/png'})
+            logger.info("Step 3 finished. Image uploaded.")
 
-            # 4. 設為預設
-            logger.info(f"Setting rich menu {rich_menu_id} as default.")
+            # --- Step 4: Set as Default ---
+            logger.info(f"Step 4: Setting menu {rich_menu_id} as default...")
             self.line_bot_api.set_default_rich_menu(rich_menu_id)
-            logger.info("Rich menu set as default successfully.")
+            logger.info("Step 4 finished. Menu set as default.")
 
         except FileNotFoundError as e:
             logger.error(

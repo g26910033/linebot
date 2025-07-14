@@ -79,7 +79,7 @@ class AppConfig:
     port: int = 10000
     debug: bool = False
     text_model_name: str = "gemini-2.5-flash"
-    image_model_name: str = "imagen-3.0-generate-001"
+    image_model_name: str = "imagen-3.0-generate-002"
     chat_history_ttl: int = 7200
     max_chat_history_length: int = 20
     nearby_query_ttl: int = 300
@@ -124,6 +124,7 @@ def load_config() -> AppConfig:
     """
     從環境變數動態載入應用程式配置，並進行驗證。
     """
+    print("--- Loading Application Configuration ---")
     try:
         kwargs: Dict[str, Any] = {}
 
@@ -144,13 +145,18 @@ def load_config() -> AppConfig:
             has_default = (field.default is not MISSING or
                            field.default_factory is not MISSING)
 
-            kwargs[field.name] = _get_config_value(
+            value = _get_config_value(
                 key=env_key,
                 target_type=field.type,
                 default=field.default if has_default else None,
                 required=not (is_optional or has_default)
             )
+            kwargs[field.name] = value
+            # 安全地記錄載入的設定值
+            log_value = "********" if "key" in field.name.lower() or "secret" in field.name.lower() or "token" in field.name.lower() else value
+            print(f"  - Loaded '{field.name}': {log_value}")
 
+        print("--- Configuration Loading Complete ---")
         return AppConfig(**kwargs)
 
     except (ValueError, json.JSONDecodeError) as e:

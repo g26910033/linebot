@@ -7,7 +7,11 @@ import logging
 import sys
 from typing import Optional
 
-DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# 新的、更詳細的日誌格式
+DETAILED_LOG_FORMAT = (
+    '%(asctime)s - %(name)s - [%(levelname)s] - '
+    '[%(filename)s:%(lineno)d (%(funcName)s)] - %(message)s'
+)
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 
@@ -31,7 +35,7 @@ def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     formatter = logging.Formatter(
-        DEFAULT_LOG_FORMAT,
+        DETAILED_LOG_FORMAT,  # 使用新的詳細格式
         datefmt=DEFAULT_DATE_FORMAT)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
@@ -51,7 +55,7 @@ def setup_root_logger(level: str = 'INFO') -> None:
             logging,
             level.upper(),
             logging.INFO),
-        format=DEFAULT_LOG_FORMAT,
+        format=DETAILED_LOG_FORMAT,  # 使用新的詳細格式
         datefmt=DEFAULT_DATE_FORMAT,
         handlers=[
             logging.StreamHandler(

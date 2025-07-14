@@ -28,19 +28,16 @@ class AIImageService:
             logger.warning("Image model name not configured. AIImageService will be disabled.")
             return
         try:
-            model_path = (
-                f"projects/{self.config.gcp_project_id}/locations/"
-                f"{self.config.gcp_location}/publishers/google/models/"
-                f"{self.config.image_model_name}"
-            )
-            logger.info(f"Attempting to load ImageGenerationModel from: {model_path}")
-            self.image_gen_model = ImageGenerationModel.from_pretrained(model_path)
-            logger.info(f"Image generation model '{model_path}' loaded successfully.")
+            logger.info(f"Attempting to load ImageGenerationModel: {self.config.image_model_name}")
+            self.image_gen_model = ImageGenerationModel.from_pretrained(self.config.image_model_name)
+            logger.info(f"Image generation model '{self.config.image_model_name}' loaded successfully.")
         except Exception as e:
             logger.critical(
                 f"CRITICAL: AIImageService model initialization failed: {e}",
                 exc_info=True)
             self.image_gen_model = None
+        finally:
+            logger.info(f"Final state of image_gen_model: {self.image_gen_model}")
 
     def is_available(self) -> bool:
         """檢查圖像生成模型是否可用"""
