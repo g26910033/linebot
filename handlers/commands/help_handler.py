@@ -1,7 +1,8 @@
 """
 功能說明指令處理器
 """
-from linebot.v3.messaging import MessagingApi, TextMessage
+from linebot.v3.messaging import (
+    MessagingApi, TextMessage, ReplyMessageRequest)
 
 
 class HelpCommandHandler:
@@ -61,7 +62,8 @@ class HelpCommandHandler:
 🧹【清除對話紀錄】
 - `清除對話`
         """
-        self.line_bot_api.reply_message(
+        reply_request = ReplyMessageRequest(
             reply_token=reply_token,
             messages=[TextMessage(text=help_text.strip())]
         )
+        self.line_bot_api.reply_message(reply_request)

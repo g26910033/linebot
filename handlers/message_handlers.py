@@ -6,7 +6,7 @@ import threading
 
 from linebot.v3.messaging import (
     MessagingApi, TextMessage, QuickReply, QuickReplyItem,
-    MessageAction as QuickReplyMessageAction)
+    MessageAction as QuickReplyMessageAction, PushMessageRequest)
 from linebot.v3.webhooks import MessageEvent
 
 from services.storage_service import StorageService
@@ -75,18 +75,20 @@ class TextMessageHandler(BaseMessageHandler):
                     user_message, history)
                 self.storage_service.save_chat_history(
                     user_id, updated_history)
-                self.line_bot_api.push_message(
-                    to=user_id, messages=[
-                        TextMessage(
-                            text=ai_response)])
+                push_message_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text=ai_response)]
+                )
+                self.line_bot_api.push_message(push_message_request)
             except Exception as e:
                 logger.error(
                     f"Error in chat task for user {user_id}: {e}",
                     exc_info=True)
-                self.line_bot_api.push_message(
-                    to=user_id, messages=[
-                        TextMessage(
-                            text="哎呀，處理您的訊息時發生了一點問題。")])
+                error_message_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題。")]
+                )
+                self.line_bot_api.push_message(error_message_request)
         threading.Thread(target=task).start()
 
     def _handle_image_analysis(self, user_id: str, reply_token: str):

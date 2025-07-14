@@ -78,8 +78,8 @@ class AppConfig:
     redis_url: Optional[str] = None
     port: int = 10000
     debug: bool = False
-    text_model_name: str = "gemini-1.5-flash"
-    image_model_name: str = "imagen-3.0-generate-002"
+    text_model_name: str = "gemini-2.5-flash"
+    image_model_name: str = "imagen-3.0-fast-generate-001"
     chat_history_ttl: int = 7200
     max_chat_history_length: int = 20
     nearby_query_ttl: int = 300

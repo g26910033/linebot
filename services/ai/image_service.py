@@ -26,11 +26,16 @@ class AIImageService:
         """初始化圖像生成模型"""
         try:
             if self.config.image_model_name:
+                # 確保使用完整的模型路徑
+                model_path = (
+                    f"projects/{self.config.gcp_project_id}/locations/"
+                    f"{self.config.gcp_location}/publishers/google/models/"
+                    f"{self.config.image_model_name}"
+                )
                 self.image_gen_model = ImageGenerationModel.from_pretrained(
-                    self.config.image_model_name)
+                    model_path)
                 logger.info(
-                    f"Image generation model '{self.config.image_model_name}' "
-                    f"loaded for AIImageService.")
+                    f"Image generation model '{model_path}' loaded for AIImageService.")
         except Exception as e:
             logger.error(
                 f"AIImageService model initialization failed: {e}",

@@ -2,7 +2,9 @@
 AI 繪圖指令處理器
 """
 import threading
-from linebot.v3.messaging import MessagingApi, TextMessage, ImageMessage
+from linebot.v3.messaging import (
+    MessagingApi, TextMessage, ImageMessage, ReplyMessageRequest,
+    PushMessageRequest)
 from services.ai.image_service import AIImageService
 from services.storage_service import StorageService
 from utils.logger import get_logger
@@ -29,10 +31,11 @@ class DrawCommandHandler:
     def handle(self, user_id: str, reply_token: str, prompt: str) -> None:
         """處理繪圖指令。"""
         if not prompt:
-            self.line_bot_api.reply_message(
+            reply_request = ReplyMessageRequest(
                 reply_token=reply_token,
                 messages=[TextMessage(text="請告訴我要畫什麼喔！\n格式：`畫 一隻可愛的貓`")]
             )
+            self.line_bot_api.reply_message(reply_request)
             return
 
         # 這裡我們不能直接回覆，因為原始邏輯是異步的
@@ -66,15 +69,17 @@ class DrawCommandHandler:
                     messages = [TextMessage(text=f"繪圖失敗: {status_msg}")]
 
                 # 使用 push_message 而不是 reply_message，因為原始的 token 可能已經過期
-                self.line_bot_api.push_message(to=user_id, messages=messages)
+                push_request = PushMessageRequest(to=user_id, messages=messages)
+                self.line_bot_api.push_message(push_request)
 
             except Exception as e:
                 logger.error(
                     f"Error in drawing task for user {user_id}: {e}",
                     exc_info=True)
-                self.line_bot_api.push_message(
-                    to=user_id, messages=[
-                        TextMessage(
-                            text="繪圖時發生了未預期的錯誤。")])
+                error_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text="繪圖時發生了未預期的錯誤。")]
+                )
+                self.line_bot_api.push_message(error_request)
 
         threading.Thread(target=task, args=(user_id, prompt)).start()

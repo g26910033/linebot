@@ -24,11 +24,15 @@ class AICoreService:
         """根據設定初始化所有 AI 模型"""
         try:
             if self.config.text_model_name:
-                self.text_vision_model = GenerativeModel(
-                    self.config.text_model_name)
+                # 確保使用完整的模型路徑，包含專案 ID
+                model_path = (
+                    f"projects/{self.config.gcp_project_id}/locations/"
+                    f"{self.config.gcp_location}/publishers/google/models/"
+                    f"{self.config.text_model_name}"
+                )
+                self.text_vision_model = GenerativeModel(model_path)
                 logger.info(
-                    f"Text/Vision model '{self.config.text_model_name}' "
-                    f"loaded for AICoreService.")
+                    f"Text/Vision model '{model_path}' loaded for AICoreService.")
         except Exception as e:
             logger.error(
                 f"AICoreService model initialization failed: {e}",
