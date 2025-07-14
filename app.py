@@ -132,10 +132,13 @@ class LineBotApp:
         logger.info("--- Starting Rich Menu Setup ---")
         try:
             # --- Step 0: Path Handling ---
+            # 使用相對路徑來確保在不同環境中的兼容性
             base_dir = os.path.dirname(os.path.abspath(__file__))
             json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
-            png_path = os.path.join(base_dir, 'scripts', 'rich_menu_background.png')
+            png_path = os.path.join(
+                base_dir, 'scripts', 'rich_menu_background.png')
             logger.info(f"JSON path: {json_path}, PNG path: {png_path}")
+
             if not os.path.exists(json_path) or not os.path.exists(png_path):
                 logger.error("Rich menu files not found. Aborting setup.")
                 return
@@ -150,7 +153,9 @@ class LineBotApp:
                         self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
                 logger.info("Step 1 finished.")
             except ApiException as e:
-                logger.warning(f"Could not fetch/delete rich menus: {e}. This is normal if no menus exist.")
+                logger.warning(
+                    f"Could not fetch/delete rich menus: {e}. "
+                    "This is normal if no menus exist.")
 
             # --- Step 2: Create New Menu ---
             logger.info("Step 2: Creating new rich menu...")
@@ -158,14 +163,21 @@ class LineBotApp:
                 rich_menu_json = json.load(f)
             rich_menu_json['name'] = rich_menu_name
             rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
-            rich_menu_id = self.line_bot_api.create_rich_menu(rich_menu_request=rich_menu_to_create)
+            rich_menu_id_response = self.line_bot_api.create_rich_menu(
+                rich_menu_request=rich_menu_to_create)
+            rich_menu_id = rich_menu_id_response.rich_menu_id
             logger.info(f"Step 2 finished. New menu ID: {rich_menu_id}")
 
             # --- Step 3: Upload Image ---
             logger.info(f"Step 3: Uploading image for menu ID: {rich_menu_id}")
+            # 使用 MessagingApiBlob 來處理二進位檔案上傳
+            api_blob = MessagingApiBlob(self.api_client)
             with open(png_path, 'rb') as f:
-                self.line_bot_api.upload_rich_menu_image(
-                    rich_menu_id=rich_menu_id, body=f.read(), _headers={'Content-Type': 'image/png'})
+                api_blob.upload_rich_menu_image(
+                    rich_menu_id=rich_menu_id,
+                    body=f.read(),
+                    _headers={'Content-Type': 'image/png'}
+                )
             logger.info("Step 3 finished. Image uploaded.")
 
             # --- Step 4: Set as Default ---
@@ -180,13 +192,16 @@ class LineBotApp:
         except ApiException as e:
             try:
                 error_body = json.loads(e.body)
-                error_message = error_body.get('message', 'No message found in error body')
+                error_message = error_body.get(
+                    'message', 'No message found in error body')
                 error_details = error_body.get('details', [])
                 logger.error(
                     f"LINE API Error during rich menu setup: {e.status} "
                     f"{error_message}")
                 for detail in error_details:
-                    logger.error(f"  - {detail.get('property', 'N/A')}: {detail.get('message', 'N/A')}")
+                    logger.error(
+                        f"  - {detail.get('property', 'N/A')}: "
+                        f"{detail.get('message', 'N/A')}")
             except (json.JSONDecodeError, AttributeError):
                 logger.error(
                     f"LINE API Error during rich menu setup: {e.status}. "
