@@ -150,8 +150,7 @@ class AIService:
             response = self.image_gen_model.edit_image(
                 base_image=base_image,
                 prompt=translated_prompt,
-                number_of_images=1,
-                safety_settings=safety_settings,
+                number_of_images=1
             )
             return response.images[0]._image_bytes, "以圖生圖成功！"
         except Exception as e:
