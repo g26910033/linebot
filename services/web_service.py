@@ -2,6 +2,7 @@
 Web Service Module
 Handles fetching content from URLs.
 """
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
@@ -13,6 +14,8 @@ logger = get_logger(__name__)
 
 class WebService:
     """A service for fetching and parsing web content."""
+
+    _URL_PATTERN = re.compile(r'https?://\S+')
 
     def __init__(self, timeout: int = 10):
         """
@@ -133,3 +136,7 @@ class WebService:
         except Exception as e:
             logger.error(f"Error processing URL content from {url}: {e}")
             return None
+
+    def is_url(self, text: str) -> bool:
+        """Checks if the given text is a URL."""
+        return self._URL_PATTERN.match(text) is not None
