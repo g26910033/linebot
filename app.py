@@ -17,7 +17,10 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageCo
 # 依賴您專案中的其他模組
 from config.settings import load_config
 from handlers.message_handlers import TextMessageHandler, ImageMessageHandler, LocationMessageHandler
-from services.ai_service import AIService
+from services.ai.core import AICoreService
+from services.ai.parsing_service import AIParsingService
+from services.ai.image_service import AIImageService
+from services.ai.text_service import AITextService
 from services.web_service import WebService
 from services.storage_service import StorageService
 from services.utility_service import UtilityService
@@ -54,7 +57,12 @@ class LineBotApp:
         self.app = Flask(__name__)
 
         # 初始化核心服務
-        self.ai_service = AIService(self.config)
+        # AI 服務被拆分為多個模組
+        self.core_service = AICoreService(self.config)
+        self.parsing_service = AIParsingService(self.config, self.core_service)
+        self.image_service = AIImageService(self.config, self.core_service)
+        self.text_service = AITextService(self.core_service)
+        
         self.storage_service = StorageService(self.config)
         self.web_service = WebService()
         self.utility_service = UtilityService()
@@ -80,17 +88,43 @@ class LineBotApp:
 
         # 初始化訊息處理器和 Webhook
         self.text_handler = TextMessageHandler(
-            ai_service=self.ai_service,
+            core_service=self.core_service,
+            parsing_service=self.parsing_service,
+            image_service=self.image_service,
+            text_service=self.text_service,
             storage_service=self.storage_service,
             web_service=self.web_service,
             utility_service=self.utility_service,
             weather_service=self.weather_service,
             news_service=self.news_service,
             calendar_service=self.calendar_service,
-            stock_service=self.stock_service
+            stock_service=self.stock_service,
+            line_bot_api=self.line_bot_api,
+            image_service_for_router=self.image_service,
+            web_service_for_router=self.web_service,
+            text_service_for_router=self.text_service,
+            parsing_service_for_router=self.parsing_service,
+            weather_service_for_router=self.weather_service,
+            news_service_for_router=self.news_service,
+            stock_service_for_router=self.stock_service,
+            calendar_service_for_router=self.calendar_service
         )
-        self.image_handler = ImageMessageHandler(self.ai_service, self.storage_service)
-        self.location_handler = LocationMessageHandler(self.ai_service, self.storage_service)
+        # ImageMessageHandler 和 LocationMessageHandler 也需要更新以接收新的服務
+        # 暫時傳入所有服務，以便後續重構
+        self.image_handler = ImageMessageHandler(
+            core_service=self.core_service,
+            parsing_service=self.parsing_service,
+            image_service=self.image_service,
+            text_service=self.text_service,
+            storage_service=self.storage_service
+        )
+        self.location_handler = LocationMessageHandler(
+            core_service=self.core_service,
+            parsing_service=self.parsing_service,
+            image_service=self.image_service,
+            text_service=self.text_service,
+            storage_service=self.storage_service
+        )
 
         # 將 access token 傳遞給處理器以使用 loading animation
         self.text_handler.line_channel_access_token = self.config.line_channel_access_token

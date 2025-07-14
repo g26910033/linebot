@@ -68,13 +68,13 @@ class UtilityService:
         converted_value = value * rate
         return f"{value} {from_currency} 約等於 {converted_value:.4f} {to_currency}"
 
-    def parse_and_convert(self, text: str, ai_service=None) -> str | None:
+    def parse_and_convert(self, text: str, parsing_service=None) -> str | None:
         """
         解析文字並執行單位換算或匯率換算。
         """
         # 優先嘗試貨幣換算 (透過 AI 服務)
-        if ai_service:
-            currency_query = ai_service.parse_currency_conversion_query(text)
+        if parsing_service:
+            currency_query = parsing_service.parse_currency_conversion_query(text)
             if currency_query and currency_query.get("value") and currency_query.get("from_currency") and currency_query.get("to_currency"):
                 try:
                     value = Decimal(str(currency_query["value"]))
