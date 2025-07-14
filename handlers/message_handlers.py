@@ -7,7 +7,7 @@ import threading
 from linebot.v3.messaging import (
     MessagingApi, TextMessage, ImageMessage, QuickReply, QuickReplyItem,
     MessageAction as QuickReplyMessageAction, PushMessageRequest,
-    ReplyMessageRequest, MessagingApiBlob)
+    ReplyMessageRequest)
 from linebot.v3.webhooks import MessageEvent
 
 from services.storage_service import StorageService
