@@ -8,6 +8,7 @@
 import sys
 import json
 import os
+import requests
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -54,21 +55,17 @@ class LineBotApp:
         self._initialize_vertex_ai()
         self.app = Flask(__name__)
 
-        # 建立一個共用的 Configuration 物件
         self.configuration = Configuration(
             access_token=self.config.line_channel_access_token)
 
-        # 將所有服務打包成一個字典
         services = self._initialize_services()
         logger.debug("All services initialized.")
 
-        # 初始化訊息處理器和 Webhook
-        # 修正：所有 Handler 都應該接收 configuration
+        # 修正：將 text_handler 傳遞給 location_handler
         self.text_handler = TextMessageHandler(services, self.configuration)
-        self.image_handler = ImageMessageHandler(
-            self.configuration, services['storage'])
+        self.image_handler = ImageMessageHandler(self.configuration, services['storage'])
         self.location_handler = LocationMessageHandler(
-            self.configuration, services['storage'])
+            self.configuration, services['storage'], self.text_handler)
 
         self.handler = WebhookHandler(self.config.line_channel_secret)
         logger.debug("Message handlers and Webhook handler initialized.")
@@ -79,15 +76,13 @@ class LineBotApp:
         logger.info("LINE Bot application initialization complete.")
 
     def _initialize_services(self) -> dict:
-        """初始化所有服務並返回一個字典。"""
         core_service = AICoreService(self.config)
         stock_service = None
         if self.config.finnhub_api_key:
             stock_service = StockService(self.config.finnhub_api_key)
             logger.debug("Stock Service initialized.")
         else:
-            logger.warning(
-                "FINNHUB_API_KEY not set. Stock service is disabled.")
+            logger.warning("FINNHUB_API_KEY not set. Stock service is disabled.")
 
         return {
             "core": core_service,
@@ -103,80 +98,87 @@ class LineBotApp:
         }
 
     def _initialize_vertex_ai(self):
-        """使用環境變數中的 JSON 字串來初始化 Vertex AI"""
         try:
             gcp_json_str = self.config.gcp_service_account_json
             credentials_info = json.loads(gcp_json_str)
-            credentials = service_account.Credentials.from_service_account_info(
-                credentials_info)
-            vertexai.init(
-                project=self.config.gcp_project_id,
-                location=self.config.gcp_location,
-                credentials=credentials)
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            vertexai.init(project=self.config.gcp_project_id, location=self.config.gcp_location, credentials=credentials)
             logger.info("Vertex AI initialized successfully.")
         except Exception as e:
-            logger.error(
-                f"Vertex AI initialization failed: {e}",
-                exc_info=True)
+            logger.error(f"Vertex AI initialization failed: {e}", exc_info=True)
 
     def _setup_default_rich_menu(self):
-        """使用 line-bot-sdk 檢查並設定預設的圖文選單。"""
+        """檢查並設定預設的圖文選單，會強制刪除舊的同名選單"""
         rich_menu_name = "Default Rich Menu"
-        logger.info("--- Starting Rich Menu Setup ---")
+        headers = {"Authorization": f"Bearer {self.config.line_channel_access_token}"}
+        
+        try:
+            response = requests.get("https://api.line.me/v2/bot/richmenu/list", headers=headers, timeout=5)
+            response.raise_for_status()
+            existing_menus = response.json().get('richmenus', [])
+            for menu in existing_menus:
+                if menu.get('name') == rich_menu_name:
+                    delete_url = f"https://api.line.me/v2/bot/richmenu/{menu['richMenuId']}"
+                    delete_response = requests.delete(delete_url, headers=headers)
+                    if delete_response.status_code == 200:
+                        logger.info(f"Deleted old rich menu with ID: {menu['richMenuId']}")
+                    else:
+                        logger.warning(f"Failed to delete old rich menu {menu['richMenuId']}: {delete_response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Failed to get or delete rich menu list: {e}")
+
+        logger.info(f"Proceeding to create new rich menu '{rich_menu_name}'...")
+        
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
-            png_path = os.path.join(
-                base_dir, 'scripts', 'rich_menu_background.png')
-            if not os.path.exists(json_path) or not os.path.exists(png_path):
-                logger.error("Rich menu files not found. Aborting setup.")
-                return
+            with open(json_path, 'r', encoding='utf-8') as f:
+                rich_menu_data = json.load(f)
+        except FileNotFoundError:
+            logger.error(f"{json_path} not found. Cannot set up rich menu.")
+            return
+            
+        rich_menu_data['name'] = rich_menu_name
+        
+        response = requests.post(
+            "https://api.line.me/v2/bot/richmenu",
+            headers={**headers, "Content-Type": "application/json"},
+            data=json.dumps(rich_menu_data)
+        )
+        if response.status_code != 200:
+            logger.error(f"Error creating rich menu: {response.status_code} {response.text}")
+            return
+        rich_menu_id = response.json()['richMenuId']
+        logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
 
-            with ApiClient(self.configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
+        try:
+            png_path = os.path.join(base_dir, 'scripts', 'rich_menu_background.png')
+            with open(png_path, 'rb') as f:
+                image_data = f.read()
+        except FileNotFoundError:
+            logger.error(f"{png_path} not found. Cannot upload image.")
+            return
+            
+        upload_response = requests.post(
+            f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
+            headers={**headers, "Content-Type": "image/png"},
+            data=image_data
+        )
+        if upload_response.status_code != 200:
+            logger.error(f"Error uploading rich menu image: {upload_response.status_code} {upload_response.text}")
+            return
+        logger.info("Rich menu image uploaded successfully.")
 
-                # Step 1: Delete Old Menus
-                logger.info("Step 1: Deleting old rich menus...")
-                rich_menu_list = line_bot_api.get_rich_menu_list()
-                for menu in rich_menu_list.richmenus:
-                    if menu.name == rich_menu_name:
-                        logger.info(f"Deleting old menu: {menu.rich_menu_id}")
-                        line_bot_api.delete_rich_menu(menu.rich_menu_id)
-                logger.info("Step 1 finished.")
-
-                # Step 2: Create New Menu
-                logger.info("Step 2: Creating new rich menu...")
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    rich_menu_json = json.load(f)
-                rich_menu_json['name'] = rich_menu_name
-                rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
-                rich_menu_id_response = line_bot_api.create_rich_menu(
-                    rich_menu_request=rich_menu_to_create)
-                rich_menu_id = rich_menu_id_response.rich_menu_id
-                logger.info(f"Step 2 finished. New menu ID: {rich_menu_id}")
-
-                # Step 3: Upload Image
-                logger.info(f"Step 3: Uploading image for menu ID: {rich_menu_id}")
-                with open(png_path, 'rb') as f:
-                    line_bot_api.upload_rich_menu_image(
-                        rich_menu_id=rich_menu_id,
-                        body=f.read(),
-                        _headers={'Content-Type': 'image/png'}
-                    )
-                logger.info("Step 3 finished. Image uploaded.")
-
-                # Step 4: Set as Default
-                logger.info(f"Step 4: Setting menu {rich_menu_id} as default...")
-                line_bot_api.set_default_rich_menu(rich_menu_id)
-                logger.info("Step 4 finished. Menu set as default.")
-
-        except ApiException as e:
-            logger.error(f"LINE API Error during rich menu setup: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"An unexpected error occurred during rich menu setup: {e}", exc_info=True)
+        default_response = requests.post(
+            f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
+            headers=headers
+        )
+        if default_response.status_code != 200:
+            logger.error(f"Error setting default rich menu: {default_response.status_code} {default_response.text}")
+            return
+        logger.info("Rich menu set as default successfully.")
 
     def _register_routes(self):
-        """註冊 Flask 路由"""
         @self.app.route("/")
         def home():
             return {"status": "running"}
@@ -184,8 +186,7 @@ class LineBotApp:
         @self.app.route("/callback", methods=['POST'])
         def callback():
             signature = request.headers.get('X-Line-Signature')
-            if not signature:
-                abort(400)
+            if not signature: abort(400)
             body = request.get_data(as_text=True)
             try:
                 self.handler.handle(body, signature)
@@ -197,7 +198,6 @@ class LineBotApp:
             return 'OK'
 
     def _register_handlers(self):
-        """註冊 LINE 事件處理器"""
         @self.handler.add(MessageEvent, message=TextMessageContent)
         def handle_text(event):
             self.text_handler.handle(event)
@@ -212,24 +212,18 @@ class LineBotApp:
 
         @self.handler.add(PostbackEvent)
         def handle_postback(event):
-            self.text_handler.handle(event)
-
+            self.text_handler.handle_postback(event)
 
 def create_app() -> Flask:
-    """建立 Flask 應用程式實例 (供 Gunicorn 使用)"""
     logger.info("create_app() called by WSGI server.")
     bot_app = LineBotApp()
-    # 將圖文選單設定放回 Gunicorn 的啟動流程中
     bot_app._setup_default_rich_menu()
     return bot_app.app
-
 
 if __name__ == "__main__":
     try:
         logger.info("Running app.py directly. This is for local development.")
         bot_app = LineBotApp()
-        # 在本地開發時，也執行圖文選單設定
-        bot_app._setup_default_rich_menu()
         port = bot_app.config.port
         debug_mode = bot_app.config.debug
         if debug_mode:

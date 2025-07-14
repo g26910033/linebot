@@ -26,7 +26,6 @@ class AIParsingService:
         """使用核心服務生成內容的輔助函式"""
         if not self.core_service.is_available():
             raise ConnectionError("AI Core Service is not available.")
-        # 將字串 prompt 轉換為 Vertex AI SDK 期望的格式
         response = self.core_service.text_vision_model.generate_content(
             [Part.from_text(prompt)]
         )
@@ -38,13 +37,16 @@ class AIParsingService:
         current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
         prompt = f"""
         Analyze the user input and return a single JSON object with "intent" and "data".
-        Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "general_chat".
+        Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "help", "draw", "clear_memory", "general_chat".
         - weather: requires "city" and "type" (current/forecast).
         - stock: requires "symbol".
         - news: data is empty.
         - calendar: requires "title", "start_time", "end_time".
         - translation: requires "text_to_translate", "target_language".
         - nearby_search: requires "query".
+        - help: for help command.
+        - draw: requires "prompt".
+        - clear_memory: for clear memory command.
         - general_chat: for anything else.
         Current time: {current_time}.
         User input: "{text}"
@@ -55,7 +57,6 @@ class AIParsingService:
             return json.loads(cleaned_response)
         except Exception as e:
             logger.error(f"Error parsing intent from text: {e}", exc_info=True)
-            # 修正語法錯誤，{{}} -> {}
             return {"intent": "general_chat", "data": {}}
 
     def search_location(
