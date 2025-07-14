@@ -20,7 +20,6 @@ dist/
 # Environment variables
 .env
 .flaskenv
-*.json
 
 # Node.js specific (if any frontend build process)
 node_modules/
