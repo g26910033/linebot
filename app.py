@@ -82,9 +82,6 @@ class LineBotApp:
         self._register_routes()
         self._register_handlers()
 
-        # 在應用程式啟動時設定圖文選單
-        self._setup_default_rich_menu()
-
         logger.info("LINE Bot application initialization complete.")
 
     def _initialize_services(self) -> dict:
@@ -243,6 +240,10 @@ def create_app() -> Flask:
     """建立 Flask 應用程式實例 (供 Gunicorn 使用)"""
     logger.info("create_app() called by WSGI server.")
     bot_app = LineBotApp()
+    
+    # 在應用程式完全初始化後，再設定圖文選單
+    bot_app._setup_default_rich_menu()
+    
     return bot_app.app
 
 

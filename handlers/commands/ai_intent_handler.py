@@ -2,8 +2,10 @@
 AI 意圖處理器
 """
 import threading
+from datetime import datetime
 from linebot.v3.messaging import (
-    MessagingApi, TextMessage, PushMessageRequest)
+    MessagingApi, TextMessage, PushMessageRequest, FlexMessage,
+    FlexContainer)
 from services.ai.parsing_service import AIParsingService
 from services.storage_service import StorageService
 from services.weather_service import WeatherService
@@ -38,55 +40,53 @@ class AIIntentHandler:
         self.calendar_service = calendar_service
         self.line_bot_api = line_bot_api
 
-    def handle(self, user_id: str, user_message: str):
-        """根據使用者訊息，解析意圖並執行對應操作。"""
+    def handle(self, user_id: str, user_message: str) -> bool:
+        """
+        使用 AI 判斷使用者意圖，並路由到對應的處理器。
+        """
+        intent_data = self.parsing_service.parse_intent_from_text(user_message)
+        intent = intent_data.get("intent")
+        data = intent_data.get("data")
 
-        # 天氣查詢
-        weather_query = self.parsing_service.parse_weather_query_from_text(
-            user_message)
-        if weather_query and weather_query.get("city"):
-            self._handle_weather(user_id, weather_query)
+        if not intent or intent == "general_chat":
+            return False  # 未匹配到特定意圖，交由通用聊天處理
+
+        logger.info(f"AI Intent detected: {intent} with data: {data}")
+
+        handler_map = {
+            "weather": self._handle_weather,
+            "stock": self._handle_stock,
+            "news": self._handle_news,
+            "calendar": self._handle_calendar,
+            "translation": self._handle_translation,
+            "nearby_search": self._handle_nearby_search,
+        }
+
+        handler = handler_map.get(intent)
+        if handler:
+            # 根據 handler 的參數需求傳遞 data
+            if intent in ["weather", "stock", "calendar", "translation", "nearby_search"]:
+                handler(user_id, data)
+            else:
+                handler(user_id)
             return True
 
-        # 股票查詢
-        symbol = self.parsing_service.parse_stock_symbol_from_text(
-            user_message)
-        if symbol:
-            self._handle_stock(user_id, symbol)
-            return True
+        return False
 
-        # 新聞查詢
-        if any(keyword in user_message.lower() for keyword in ["新聞", "頭條"]):
-            self._handle_news(user_id)
-            return True
-
-        # 日曆查詢
-        if any(keyword in user_message.lower()
-               for keyword in ["提醒我", "新增日曆", "新增行程", "的日曆"]):
-            self._handle_calendar(user_id, user_message)
-            return True
-
-        # 翻譯查詢
-        if any(keyword in user_message.lower() for keyword in ["翻譯", "翻成"]):
-            self._handle_translation(user_id, user_message)
-            return True
-
-        # 地點搜尋 (新增的邏輯)
-        if any(keyword in user_message.lower() for keyword in ["附近", "找", "搜尋"]):
-            self._handle_nearby_search(user_id, user_message)
-            return True
-
-        return False  # 未匹配到任何 AI 意圖
-
-    def _handle_weather(self, user_id, weather_query):
-        city = weather_query["city"]
-        query_type = weather_query.get("type", "current")
+    def _handle_weather(self, user_id, data):
+        city = data.get("city")
+        if not city:
+            return
+        query_type = data.get("type", "current")
 
         def task():
             if query_type == "forecast":
-                result = self.weather_service.get_weather_forecast(city)
-                # 這部分需要重構 _create_weather_forecast_carousel
-                message = TextMessage(text=str(result))  # 簡化處理
+                forecast_data = self.weather_service.get_weather_forecast(city)
+                if isinstance(forecast_data, str):
+                    message = TextMessage(text=forecast_data)
+                else:
+                    carousel = self._create_weather_forecast_carousel(forecast_data)
+                    message = FlexMessage(alt_text=f"{city} 的天氣預報", contents=carousel)
             else:
                 result = self.weather_service.get_current_weather(city)
                 message = TextMessage(text=result)
@@ -94,7 +94,10 @@ class AIIntentHandler:
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
-    def _handle_stock(self, user_id, symbol):
+    def _handle_stock(self, user_id, data):
+        symbol = data.get("symbol")
+        if not symbol:
+            return
         def task():
             result = self.stock_service.get_stock_quote(symbol)
             push_request = PushMessageRequest(
@@ -115,22 +118,19 @@ class AIIntentHandler:
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
-    def _handle_calendar(self, user_id, user_message):
+    def _handle_calendar(self, user_id, data):
         def task():
-            event_data = self.parsing_service.parse_event_from_text(
-                user_message)
-            if not event_data or not event_data.get('title'):
+            if not data or not data.get('title'):
                 reply_text = "抱歉，我無法理解您的行程安排，可以說得更清楚一點嗎？"
             else:
-                calendar_link = self.calendar_service.create_google_calendar_link(
-                    event_data)
+                calendar_link = self.calendar_service.create_google_calendar_link(data)
                 if not calendar_link:
                     reply_text = "抱歉，處理您的日曆請求時發生錯誤。"
                 else:
                     reply_text = (
                         f"好的，我為您準備好日曆連結了！\n\n"
-                        f"標題：{event_data.get('title')}\n"
-                        f"時間：{event_data.get('start_time')}\n\n"
+                        f"標題：{data.get('title')}\n"
+                        f"時間：{data.get('start_time')}\n\n"
                         "請點擊下方連結將它加入您的 Google 日曆：\n"
                         f"{calendar_link}")
             push_request = PushMessageRequest(
@@ -140,9 +140,16 @@ class AIIntentHandler:
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
-    def _handle_translation(self, user_id, user_message):
+    def _handle_translation(self, user_id, data):
+        text_to_translate = data.get("text_to_translate")
+        target_language = data.get("target_language")
+        if not text_to_translate:
+            return
         def task():
-            translated_text = self.text_service.translate_text(user_message)
+            # 這裡的 translate_text 服務需要修改以接收結構化數據
+            # 暫時簡化處理
+            user_message_for_translation = f"翻譯 {text_to_translate} 到 {target_language}"
+            translated_text = self.text_service.translate_text(user_message_for_translation)
             push_request = PushMessageRequest(
                 to=user_id,
                 messages=[TextMessage(text=translated_text)]
@@ -150,8 +157,11 @@ class AIIntentHandler:
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
-    def _handle_nearby_search(self, user_id, user_message):
+    def _handle_nearby_search(self, user_id, data):
         """處理附近地點搜尋的意圖。"""
+        query = data.get("query")
+        if not query:
+            return
         def task():
             last_location = self.storage_service.get_user_last_location(user_id)
             if not last_location:
@@ -163,12 +173,62 @@ class AIIntentHandler:
                 self.line_bot_api.push_message(push_request)
                 return
 
-            # 這裡未來可以串接真正的 Google Maps API
+            # TODO: 這裡未來可以串接真正的 Google Maps API
             # 目前先回覆一則確認訊息
-            reply_text = f"收到您的搜尋指令：「{user_message}」。\n我將在您分享的位置：(lat: {last_location['latitude']}, lon: {last_location['longitude']}) 附近尋找。"
+            reply_text = f"收到您的搜尋指令：「{query}」。\n我將在您分享的位置：(lat: {last_location['latitude']}, lon: {last_location['longitude']}) 附近尋找。"
             push_request = PushMessageRequest(
                 to=user_id,
                 messages=[TextMessage(text=reply_text)]
             )
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
+
+    def _create_weather_forecast_carousel(self, data: dict) -> FlexContainer:
+        """建立天氣預報的 Flex Message 轉盤。"""
+        bubbles = []
+        for forecast in data.get('forecasts', []):
+            bubble = {
+                "type": "bubble",
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": datetime.fromtimestamp(forecast['dt']).strftime('%m/%d (%a)'),
+                            "weight": "bold",
+                            "size": "xl",
+                            "align": "center"
+                        },
+                        {
+                            "type": "image",
+                            "url": f"https://openweathermap.org/img/wn/{forecast['icon']}@2x.png",
+                            "size": "md",
+                            "aspectMode": "fit"
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": f"{forecast['description']}",
+                                    "size": "lg",
+                                    "align": "center",
+                                    "wrap": True
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{round(forecast['temp_min'])}°C - {round(forecast['temp_max'])}°C",
+                                    "size": "md",
+                                    "align": "center",
+                                    "color": "#666666"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+            bubbles.append(FlexContainer.from_dict(bubble))
+
+        return FlexContainer(type="carousel", contents=bubbles)

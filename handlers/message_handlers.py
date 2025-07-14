@@ -5,9 +5,9 @@
 import threading
 
 from linebot.v3.messaging import (
-    MessagingApi, TextMessage, QuickReply, QuickReplyItem,
+    MessagingApi, TextMessage, ImageMessage, QuickReply, QuickReplyItem,
     MessageAction as QuickReplyMessageAction, PushMessageRequest,
-    ReplyMessageRequest)
+    ReplyMessageRequest, MessagingApiBlob)
 from linebot.v3.webhooks import MessageEvent
 
 from services.storage_service import StorageService
@@ -104,9 +104,11 @@ class TextMessageHandler(BaseMessageHandler):
                 return
 
             try:
-                message_content = self.line_bot_api.get_message_content(
-                    last_image_id)
-                image_data = message_content.read()
+                # 使用 MessagingApiBlob 來下載內容
+                api_blob = MessagingApiBlob(self.line_bot_api.api_client)
+                message_content = api_blob.get_message_content(
+                    message_id=last_image_id)
+                image_data = message_content
                 analysis_result = self.image_service.analyze_image(image_data)
                 push_request = PushMessageRequest(
                     to=user_id, messages=[TextMessage(text=analysis_result)])
@@ -123,13 +125,70 @@ class TextMessageHandler(BaseMessageHandler):
         threading.Thread(target=task).start()
 
     def _handle_image_to_image_init(self, user_id: str, reply_token: str):
-        # ... (同上)
-        pass
+        """處理以圖生圖的初始指令。"""
+        last_image_id = self.storage_service.get_user_last_image_id(user_id)
+        if not last_image_id:
+            reply_text = "請您先上傳一張要做為基底的圖片喔！"
+            reply_request = ReplyMessageRequest(
+                reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+            self.line_bot_api.reply_message(reply_request)
+            return
+
+        self.storage_service.set_user_state(user_id, "waiting_image_prompt")
+        reply_text = "收到！請現在用文字告訴我，您想如何修改這張圖片？（例如：`讓它變成梵谷的風格`）"
+        reply_request = ReplyMessageRequest(
+            reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+        self.line_bot_api.reply_message(reply_request)
 
     def _handle_image_to_image_prompt(
             self, user_id: str, prompt: str, reply_token: str):
-        # ... (同上)
-        pass
+        """處理使用者輸入的以圖生圖提示詞。"""
+        self.storage_service.set_user_state(user_id, "") # 清除狀態
+        last_image_id = self.storage_service.get_user_last_image_id(user_id)
+
+        if not last_image_id:
+            reply_text = "抱歉，我找不到您上次傳送的圖片，請重新上傳一次。"
+            reply_request = ReplyMessageRequest(
+                reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+            self.line_bot_api.reply_message(reply_request)
+            return
+
+        # 異步處理圖片生成
+        def task():
+            try:
+                # 下載基底圖片
+                api_blob = MessagingApiBlob(self.line_bot_api.api_client)
+                base_image_bytes = api_blob.get_message_content(message_id=last_image_id)
+
+                # 生成新圖片
+                image_bytes, status_msg = self.image_service.generate_image_from_image(
+                    base_image_bytes, prompt)
+
+                if image_bytes:
+                    image_url, upload_status = self.storage_service.upload_image(image_bytes)
+                    if image_url:
+                        messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]
+                    else:
+                        messages = [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
+                else:
+                    messages = [TextMessage(text=f"以圖生圖失敗: {status_msg}")]
+
+                push_request = PushMessageRequest(to=user_id, messages=messages)
+                self.line_bot_api.push_message(push_request)
+
+            except Exception as e:
+                logger.error(f"Error in image-to-image task for user {user_id}: {e}", exc_info=True)
+                error_text = "抱歉，以圖生圖時發生未預期的錯誤。"
+                push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=error_text)])
+                self.line_bot_api.push_message(push_request)
+
+        # 先給予一個快速的回覆，避免 token 過期
+        initial_reply = ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=f"好的，正在為您修改圖片，請稍候...")])
+        self.line_bot_api.reply_message(initial_reply)
+
+        threading.Thread(target=task).start()
 
 
 class ImageMessageHandler(BaseMessageHandler):
