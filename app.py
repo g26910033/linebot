@@ -9,9 +9,9 @@ import sys
 import json
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
-from linebot.v3.exceptions import InvalidSignatureError, LineBotApiError
+from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, RichMenuRequest)
+    Configuration, ApiClient, MessagingApi, RichMenuRequest, ApiException)
 from linebot.v3.webhooks import (
     MessageEvent, TextMessageContent, ImageMessageContent,
     LocationMessageContent, PostbackEvent)
@@ -162,12 +162,20 @@ class LineBotApp:
             logger.error(
                 f"Rich menu setup failed: {e}. Make sure 'scripts/rich_menu.json' "
                 "and 'scripts/rich_menu_background.png' exist.")
-        except LineBotApiError as e:
-            logger.error(
-                f"LINE API Error during rich menu setup: {e.status_code} "
-                f"{e.error.message}")
-            for detail in e.error.details:
-                logger.error(f"  - {detail.property}: {detail.message}")
+        except ApiException as e:
+            try:
+                error_body = json.loads(e.body)
+                error_message = error_body.get('message', 'No message found in error body')
+                error_details = error_body.get('details', [])
+                logger.error(
+                    f"LINE API Error during rich menu setup: {e.status} "
+                    f"{error_message}")
+                for detail in error_details:
+                    logger.error(f"  - {detail.get('property', 'N/A')}: {detail.get('message', 'N/A')}")
+            except (json.JSONDecodeError, AttributeError):
+                logger.error(
+                    f"LINE API Error during rich menu setup: {e.status}. "
+                    f"Could not parse error body: {e.body}", exc_info=True)
         except Exception as e:
             logger.error(
                 f"An unexpected error occurred during rich menu setup: {e}",
