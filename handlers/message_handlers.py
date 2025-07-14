@@ -6,7 +6,8 @@ import threading
 
 from linebot.v3.messaging import (
     MessagingApi, TextMessage, QuickReply, QuickReplyItem,
-    MessageAction as QuickReplyMessageAction, PushMessageRequest)
+    MessageAction as QuickReplyMessageAction, PushMessageRequest,
+    ReplyMessageRequest)
 from linebot.v3.webhooks import MessageEvent
 
 from services.storage_service import StorageService
@@ -123,12 +124,15 @@ class ImageMessageHandler(BaseMessageHandler):
             QuickReplyItem(action=QuickReplyMessageAction(
                 label="🎨 以圖生圖", text="[指令]以圖生圖")),
         ])
-        self.line_bot_api.reply_message(
+        reply_request = ReplyMessageRequest(
             reply_token=reply_token,
             messages=[
                 TextMessage(
                     text="收到您的圖片了！請問您想做什麼？",
-                    quick_reply=quick_reply)])
+                    quick_reply=quick_reply)
+            ]
+        )
+        self.line_bot_api.reply_message(reply_request)
 
 
 class LocationMessageHandler(BaseMessageHandler):

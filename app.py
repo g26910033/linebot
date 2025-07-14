@@ -7,6 +7,7 @@
 
 import sys
 import json
+import os
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -131,8 +132,19 @@ class LineBotApp:
         """使用 line-bot-sdk 檢查並設定預設的圖文選單。"""
         rich_menu_name = "Default Rich Menu"
         try:
+            # --- 路徑處理 ---
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
+            png_path = os.path.join(
+                base_dir, 'scripts', 'rich_menu_background.png')
+            logger.info(f"Current working directory: {os.getcwd()}")
+            logger.info(f"Attempting to load rich menu JSON from: {json_path}")
+            logger.info(f"Attempting to load rich menu PNG from: {png_path}")
+
             # 1. 取得所有圖文選單並刪除同名的舊選單
+            logger.info("Fetching existing rich menus...")
             rich_menu_list = self.line_bot_api.get_rich_menu_list()
+            logger.info(f"Found {len(rich_menu_list.richmenus)} existing menus.")
             for menu in rich_menu_list.richmenus:
                 if menu.name == rich_menu_name:
                     logger.info(f"Deleting old rich menu: {menu.rich_menu_id}")
@@ -140,7 +152,7 @@ class LineBotApp:
 
             # 2. 建立圖文選單
             logger.info(f"Creating new rich menu: '{rich_menu_name}'")
-            with open('scripts/rich_menu.json', 'r', encoding='utf-8') as f:
+            with open(json_path, 'r', encoding='utf-8') as f:
                 rich_menu_json = json.load(f)
             rich_menu_json['name'] = rich_menu_name
             rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
@@ -149,19 +161,21 @@ class LineBotApp:
             logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
 
             # 3. 上傳圖片
-            with open('scripts/rich_menu_background.png', 'rb') as f:
+            logger.info(f"Uploading image for rich menu ID: {rich_menu_id}")
+            with open(png_path, 'rb') as f:
                 self.line_bot_api.upload_rich_menu_image(
                     rich_menu_id, f.read(), 'image/png')
             logger.info("Rich menu image uploaded successfully.")
 
             # 4. 設為預設
+            logger.info(f"Setting rich menu {rich_menu_id} as default.")
             self.line_bot_api.set_default_rich_menu(rich_menu_id)
             logger.info("Rich menu set as default successfully.")
 
         except FileNotFoundError as e:
             logger.error(
-                f"Rich menu setup failed: {e}. Make sure 'scripts/rich_menu.json' "
-                "and 'scripts/rich_menu_background.png' exist.")
+                f"Rich menu setup failed due to missing file: {e}. "
+                f"Please ensure '{json_path}' and '{png_path}' exist.")
         except ApiException as e:
             try:
                 error_body = json.loads(e.body)
