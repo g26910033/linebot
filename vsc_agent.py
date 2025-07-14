@@ -11,11 +11,11 @@ import difflib
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, List, Optional
 
 try:
     import vertexai
-    from vertexai.generative_models import GenerativeModel, Part
+    from vertexai.generative_models import GenerativeModel
 except ImportError:
     print("\n[錯誤] 缺少必要的 'google-cloud-aiplatform' 套件。")
     print("請在您的終端機中，啟用 venv 後執行：pip3 install -r requirements.txt\n")
@@ -125,7 +125,7 @@ def get_ai_response(prompt_text: str, expect_json: bool = False) -> Any:
                 if json_start != -1:
                     json_end = max(output.rfind('}'), output.rfind(']'))
                     if json_end > json_start:
-                        cleaned_output = output[json_start:json_end+1]
+                        cleaned_output = output[json_start:json_end + 1]
                     else:
                         raise json.JSONDecodeError("在 AI 回應中找不到有效的 JSON 物件。", output, 0)
                 else:
@@ -190,6 +190,8 @@ def generate_full_modification(file_path: str, file_content: str, user_prompt: s
     return get_ai_response(prompt, expect_json=False)
 
 # --- Main Agent Logic ---
+
+
 def project_agent():
     global model
     try:
@@ -208,7 +210,6 @@ def project_agent():
         model = GenerativeModel(model_name)
         
         print_color(f"✅ Google AI 初始化成功！模型：{model_name}，專案：{gcp_project_id}", "32")
-
     except Exception as e:
         print_color(f"❌ Google AI 初始化失敗: {e}", "31")
         sys.exit(1)
@@ -218,7 +219,6 @@ def project_agent():
         sys.exit(1)
 
     print_color("🚀 專案級 AI 代理 Pro 已啟動！", "35")
-    
     project_tree = get_project_tree()
     original_contents = {}
     exclude_dirs = {'.git', '__pycache__', '.vscode', 'venv', '.venv'}
@@ -230,21 +230,23 @@ def project_agent():
             if p.is_symlink() or str(p) in exclude_files or any(part in exclude_dirs for part in p.parts):
                 continue
             if p.is_file():
-                 try:
+                try:
                     with open(p, 'r', encoding='utf-8') as f_content:
                         original_contents[str(p)] = f_content.read()
-                 except (IOError, UnicodeDecodeError): pass
-    
+                except (IOError, UnicodeDecodeError):
+                    pass
+
     current_contents = original_contents.copy()
     print_color(f"✅ 專案掃描完成，已載入 {len(current_contents)} 個可編輯檔案。", "32")
-    
     while True:
         try:
             user_input = input("🤖 請下達您的專案級指令 (或輸入 !help): ")
-            if not user_input.strip(): continue
-            
+            if not user_input.strip():
+                continue
+
             command = user_input.strip().lower()
-            if command == "!quit": break
+            if command == "!quit":
+                break
             if command == "!help":
                 print_color("\n--- 可用指令 ---", "33")
                 print("!help   : 顯示此說明")
@@ -260,7 +262,7 @@ def project_agent():
                 branch_name = f"feature/agent-edits-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
                 commit_message = input("請輸入本次提交的說明 (Commit Message): ")
                 if not commit_message:
-                    commit_message = f"AI-assisted changes based on user prompt"
+                    commit_message = "AI-assisted changes based on user prompt"
                 if git_push_changes(branch_name, list(changed_files.keys()), commit_message):
                     print_color("\n✅ 成功！已將變更推送至新分支。", "32")
                     break
@@ -274,12 +276,11 @@ def project_agent():
                 continue
 
             print_color(f"📝 AI 規劃修改以下檔案: {', '.join(files_to_edit)}\n", "36")
-            
             accepted_modifications = {}
 
             # --- 化整為零：一次處理一個檔案 ---
             for i, file_path in enumerate(files_to_edit):
-                print_color(f"--- ({i+1}/{len(files_to_edit)}) 正在處理: {file_path} ---", "35")
+                print_color(f"--- ({i + 1}/{len(files_to_edit)}) 正在處理: {file_path} ---", "35")
                 if file_path not in current_contents:
                     print_color(f"⚠️  警告：規劃修改的檔案 {file_path} 不存在於專案中，已跳過。", "33")
                     continue
@@ -300,27 +301,26 @@ def project_agent():
                     print_color(f"🤔 AI 認為 {file_path} 無需修改，已跳過。", "33")
                     continue
 
-                print_color("\n" + "="*25 + f" 對 {file_path} 的提議變更 " + "="*25, "94")
+                print_color("\n" + "=" * 25 + f" 對 {file_path} 的提議變更 " + "=" * 25, "94")
                 print_diff(diff)
-                print_color("="*70 + "\n", "94")
-
+                print_color("=" * 70 + "\n", "94")
                 apply_change = input(f"是否套用對 {file_path} 的變更？(y/n/q) [yes/no/quit all]: ").lower()
-                
+
                 if apply_change == 'y':
                     accepted_modifications[file_path] = new_content
-                    print_color(f"✅ 變更已接受並暫存。", "32")
+                    print_color("✅ 變更已接受並暫存。", "32")
                 elif apply_change == 'q':
                     print_color("🛑 已中止所有後續修改。", "35")
-                    break 
+                    break
                 else:
                     print_color(f"⏭️ 已跳過對 {file_path} 的修改。", "36")
                 print("-" * 70)
 
             if accepted_modifications:
                 for file_path, new_content in accepted_modifications.items():
-                        current_contents[file_path] = new_content
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(new_content)
+                    current_contents[file_path] = new_content
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
                 print_color("✅ 所有變更已套用！", "32")
             else:
                 print_color("操作已取消。", "36")
@@ -329,6 +329,7 @@ def project_agent():
             break
         except Exception as e:
             print_color(f"\n❌ 發生未預期的錯誤: {e}", "31")
+
 
 if __name__ == "__main__":
     project_agent()

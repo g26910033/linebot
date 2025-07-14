@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from datetime import datetime
 from dateutil import parser
 
+
 class CalendarService:
     """提供日曆相關功能的服務。"""
 
@@ -15,7 +16,9 @@ class CalendarService:
             # 解析時間字串
             dt_obj = parser.isoparse(dt_str)
             # 轉換為 UTC 時間
-            dt_utc = dt_obj.astimezone(datetime.now().astimezone().tzinfo).astimezone(tz=None)
+            dt_utc = dt_obj.astimezone(
+                datetime.now().astimezone().tzinfo).astimezone(
+                tz=None)
             # 格式化為 Google Calendar 所需的格式
             return dt_utc.strftime('%Y%m%dT%H%M%SZ')
         except (ValueError, TypeError):
@@ -44,9 +47,9 @@ class CalendarService:
             'action': 'TEMPLATE',
             'text': title,
             'dates': f"{gcal_start}/{gcal_end}",
-            'details': f'此活動由您的 LINE Bot 助理建立。',
+            'details': '此活動由您的 LINE Bot 助理建立。',
             'sf': 'true',
             'output': 'xml'
         }
-        
+
         return base_url + urlencode(params)

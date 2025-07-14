@@ -8,6 +8,7 @@ from datetime import datetime
 
 logger = get_logger(__name__)
 
+
 class WeatherService:
     """提供天氣查詢功能的服務。"""
 
@@ -54,7 +55,10 @@ class WeatherService:
             'lang': 'zh_tw'
         }
         try:
-            response = requests.get(self.current_weather_url, params=params, timeout=5)
+            response = requests.get(
+                self.current_weather_url,
+                params=params,
+                timeout=5)
             response.raise_for_status()
             data = response.json()
             desc = data['weather'][0]['description']
@@ -64,7 +68,8 @@ class WeatherService:
             logger.error(f"Failed to get current weather for {city_name}: {e}")
             return "抱歉，無法獲取即時天氣資訊，請稍後再試。"
         except (IndexError, KeyError) as e:
-            logger.error(f"Error parsing current weather data for {city_name}: {e}")
+            logger.error(
+                f"Error parsing current weather data for {city_name}: {e}")
             return "抱歉，解析即時天氣資料時發生錯誤。"
 
     def get_weather_forecast(self, city_name: str) -> dict | str:
@@ -81,16 +86,20 @@ class WeatherService:
             'lang': 'zh_tw'
         }
         try:
-            response = requests.get(self.forecast_url, params=params, timeout=5)
+            response = requests.get(
+                self.forecast_url, params=params, timeout=5)
             response.raise_for_status()
             forecast_data = response.json()
 
             # 處理並簡化預報資料，每天只取一筆中午的資料
             daily_forecasts = {}
             for item in forecast_data.get('list', []):
-                date_str = datetime.fromtimestamp(item['dt']).strftime('%Y-%m-%d')
+                date_str = datetime.fromtimestamp(
+                    item['dt']).strftime('%Y-%m-%d')
                 # 只選擇每天最接近中午 12:00 的預報
-                if date_str not in daily_forecasts or abs(datetime.fromtimestamp(item['dt']).hour - 12) < abs(datetime.fromtimestamp(daily_forecasts[date_str]['dt']).hour - 12):
+                if (date_str not in daily_forecasts or
+                    abs(datetime.fromtimestamp(item['dt']).hour - 12) <
+                        abs(datetime.fromtimestamp(daily_forecasts[date_str]['dt']).hour - 12)):
                     daily_forecasts[date_str] = {
                         'dt': item['dt'],
                         'temp': item['main']['temp'],
@@ -99,15 +108,19 @@ class WeatherService:
                         'description': item['weather'][0]['description'],
                         'icon': item['weather'][0]['icon']
                     }
-            
+
             # 轉換為列表並排序
-            sorted_forecasts = sorted(daily_forecasts.values(), key=lambda x: x['dt'])
-            
+            sorted_forecasts = sorted(
+                daily_forecasts.values(),
+                key=lambda x: x['dt'])
+
             return {"city": city_name, "forecasts": sorted_forecasts}
 
         except requests.RequestException as e:
-            logger.error(f"Failed to get weather forecast for {city_name}: {e}")
+            logger.error(
+                f"Failed to get weather forecast for {city_name}: {e}")
             return "抱歉，無法獲取天氣預報資訊，請稍後再試。"
         except (IndexError, KeyError) as e:
-            logger.error(f"Error parsing weather forecast data for {city_name}: {e}")
+            logger.error(
+                f"Error parsing weather forecast data for {city_name}: {e}")
             return "抱歉，解析天氣預報資料時發生錯誤。"

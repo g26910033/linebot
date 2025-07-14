@@ -7,9 +7,11 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class APIKeyError(Exception):
     """自訂 API 金鑰相關錯誤。"""
     pass
+
 
 class StockService:
     """提供股市查詢功能的服務。"""
@@ -34,7 +36,7 @@ class StockService:
 
             company_name = profile.get('name', symbol)
             currency = profile.get('currency', 'USD')
-            
+
             current_price = quote.get('c', 'N/A')
             change = quote.get('d', 'N/A')
             percent_change = quote.get('dp', 'N/A')
@@ -44,7 +46,8 @@ class StockService:
             prev_close = quote.get('pc', 'N/A')
 
             # 根據漲跌決定表情符號
-            emoji = "📈" if (isinstance(change, (int, float)) and change > 0) else "📉" if (isinstance(change, (int, float)) and change < 0) else "📊"
+            emoji = "📈" if (isinstance(change, (int, float)) and change > 0) else "📉" if (
+                isinstance(change, (int, float)) and change < 0) else "📊"
 
             return (
                 f"{emoji} {company_name} ({symbol}) 的即時股價：\n\n"
@@ -59,9 +62,10 @@ class StockService:
         except APIKeyError:
             return "抱歉，股市查詢功能目前暫停服務，可能是因為 API 金鑰設定有誤。"
         except Exception as e:
-            logger.error(f"An unexpected error occurred in get_stock_quote for {symbol}: {e}", exc_info=True)
+            logger.error(
+                f"An unexpected error occurred in get_stock_quote for {symbol}: {e}",
+                exc_info=True)
             return f"抱歉，查詢「{symbol}」時發生未預期的錯誤。"
-
 
     def _get_company_profile(self, symbol: str) -> dict | None:
         """獲取公司基本資料。"""
@@ -72,18 +76,25 @@ class StockService:
                 timeout=5
             )
             if response.status_code in [401, 403]:
-                raise APIKeyError(f"Invalid API Key. Status: {response.status_code}")
+                raise APIKeyError(
+                    f"Invalid API Key. Status: {
+                        response.status_code}")
             response.raise_for_status()
             data = response.json()
             return data if data else None
         except requests.RequestException as e:
             logger.error(f"Failed to get company profile for {symbol}: {e}")
             # 如果是 APIKeyError，重新引發它讓上層處理
-            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in [401, 403]:
-                 raise APIKeyError from e
+            if isinstance(
+                    e,
+                    requests.exceptions.HTTPError) and e.response.status_code in [
+                    401,
+                    403]:
+                raise APIKeyError from e
             return None
         except (IndexError, KeyError) as e:
-            logger.error(f"Error parsing company profile data for {symbol}: {e}")
+            logger.error(
+                f"Error parsing company profile data for {symbol}: {e}")
             return None
 
     def _get_quote(self, symbol: str) -> dict | None:
@@ -95,14 +106,21 @@ class StockService:
                 timeout=5
             )
             if response.status_code in [401, 403]:
-                raise APIKeyError(f"Invalid API Key. Status: {response.status_code}")
+                raise APIKeyError(
+                    f"Invalid API Key. Status: {
+                        response.status_code}")
             response.raise_for_status()
             data = response.json()
-            return data if data.get('c', 0) != 0 else None # Finnhub 對無資料的股票會回傳 0
+            return data if data.get(
+                'c', 0) != 0 else None  # Finnhub 對無資料的股票會回傳 0
         except requests.RequestException as e:
             logger.error(f"Failed to get quote for {symbol}: {e}")
-            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in [401, 403]:
-                 raise APIKeyError from e
+            if isinstance(
+                    e,
+                    requests.exceptions.HTTPError) and e.response.status_code in [
+                    401,
+                    403]:
+                raise APIKeyError from e
             return None
         except (IndexError, KeyError) as e:
             logger.error(f"Error parsing quote data for {symbol}: {e}")

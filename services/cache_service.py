@@ -1,4 +1,3 @@
-
 """
 快取服務模組
 提供記憶體快取（LRU）、回應快取裝飾器，優化 Render 平台效能。
@@ -13,13 +12,12 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-
-
 class MemoryCache:
     """
     記憶體快取實作（當 Redis 不可用時使用）。
     採用 LRU (Least Recently Used) 策略，最大容量可自訂。
     """
+
     def __init__(self, max_size: int = 1000) -> None:
         self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_size: int = max_size
@@ -94,7 +92,6 @@ class MemoryCache:
 _global_memory_cache = MemoryCache()
 
 
-
 def cache_response(timeout: int = 300) -> Callable:
     """
     回應快取裝飾器。
@@ -108,14 +105,24 @@ def cache_response(timeout: int = 300) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
-                cache_key_parts = (func.__name__, args, tuple(sorted(kwargs.items())))
+                cache_key_parts = (
+                    func.__name__, args, tuple(
+                        sorted(
+                            kwargs.items())))
                 cache_key = f"response_cache:{hash(json.dumps(cache_key_parts, sort_keys=True, default=str))}"
             except TypeError:
-                logger.warning("[cache_response] Args for '%s' not JSON serializable. Fallback to string hash.", func.__name__)
-                cache_key = f"response_cache:{func.__name__}:{hash(str(args) + str(kwargs))}"
+                logger.warning(
+                    "[cache_response] Args for '%s' not JSON serializable. "
+                    "Fallback to string hash.",
+                    func.__name__)
+                cache_key = (f"response_cache:{func.__name__}:"
+                             f"{hash(str(args) + str(kwargs))}")
             except Exception:
-                logger.exception("[cache_response] Error generating cache key for '%s'", func.__name__)
-                cache_key = f"response_cache:{func.__name__}:{hash(str(args) + str(kwargs))}"
+                logger.exception(
+                    "[cache_response] Error generating cache key for '%s'",
+                    func.__name__)
+                cache_key = (f"response_cache:{func.__name__}:"
+                             f"{hash(str(args) + str(kwargs))}")
 
             cached_data = _global_memory_cache.get(cache_key)
             if cached_data:
@@ -123,19 +130,29 @@ def cache_response(timeout: int = 300) -> Callable:
                 try:
                     return json.loads(cached_data)
                 except json.JSONDecodeError:
-                    logger.error("[cache_response] Corrupted cache for key: %s. Deleting.", cache_key)
+                    logger.error(
+                        "[cache_response] Corrupted cache for key: %s. "
+                        "Deleting.",
+                        cache_key)
                     _global_memory_cache.delete(cache_key)
             else:
                 logger.debug("[cache_response] Miss for key: %s", cache_key)
 
             result = func(*args, **kwargs)
             try:
-                _global_memory_cache.set(cache_key, json.dumps(result, default=str), ex=timeout)
+                _global_memory_cache.set(
+                    cache_key, json.dumps(
+                        result, default=str), ex=timeout)
                 logger.debug("[cache_response] Set for key: %s", cache_key)
             except TypeError:
-                logger.error("[cache_response] Result for '%s' not JSON serializable. Not cached.", func.__name__)
+                logger.error(
+                    "[cache_response] Result for '%s' not JSON serializable. "
+                    "Not cached.",
+                    func.__name__)
             except Exception:
-                logger.exception("[cache_response] Error setting cache for key: %s", cache_key)
+                logger.exception(
+                    "[cache_response] Error setting cache for key: %s",
+                    cache_key)
             return result
         return wrapper
     return decorator

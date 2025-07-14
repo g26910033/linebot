@@ -5,25 +5,27 @@
 整合所有服務和處理器，並作為應用程式的統一入口點。
 """
 
-import os
 import sys
-import requests
+import json
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
-from linebot.v3.exceptions import InvalidSignatureError
-from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent, PostbackEvent
+from linebot.v3.exceptions import InvalidSignatureError, LineBotApiError
+from linebot.v3.messaging import (
+    Configuration, ApiClient, MessagingApi, RichMenuRequest)
+from linebot.v3.webhooks import (
+    MessageEvent, TextMessageContent, ImageMessageContent,
+    LocationMessageContent, PostbackEvent)
 
 # 依賴您專案中的其他模組
 from config.settings import load_config
-from handlers.message_handlers import TextMessageHandler, ImageMessageHandler, LocationMessageHandler
+from handlers.message_handlers import (
+    TextMessageHandler, ImageMessageHandler, LocationMessageHandler)
 from services.ai.core import AICoreService
 from services.ai.parsing_service import AIParsingService
 from services.ai.image_service import AIImageService
 from services.ai.text_service import AITextService
 from services.web_service import WebService
 from services.storage_service import StorageService
-from services.utility_service import UtilityService
 from services.weather_service import WeatherService
 from services.news_service import NewsService
 from services.calendar_service import CalendarService
@@ -32,7 +34,6 @@ from utils.logger import get_logger, setup_root_logger
 
 # 引入 Vertex AI 初始化工具
 import vertexai
-import json
 from google.oauth2 import service_account
 
 
@@ -53,179 +54,125 @@ class LineBotApp:
 
         # 在這裡直接初始化 Vertex AI
         self._initialize_vertex_ai()
-        
+
         self.app = Flask(__name__)
 
-        # 初始化核心服務
-        # AI 服務被拆分為多個模組
-        self.core_service = AICoreService(self.config)
-        self.parsing_service = AIParsingService(self.config, self.core_service)
-        self.image_service = AIImageService(self.config, self.core_service)
-        self.text_service = AITextService(self.core_service)
-        
-        self.storage_service = StorageService(self.config)
-        self.web_service = WebService()
-        self.utility_service = UtilityService()
-        self.weather_service = WeatherService(self.config.openweather_api_key)
-        self.news_service = NewsService(self.config.news_api_key)
-        self.calendar_service = CalendarService()
-        
-        # 只有在 API Key 存在時才初始化 StockService
-        if self.config.finnhub_api_key:
-            self.stock_service = StockService(self.config.finnhub_api_key)
-            logger.debug("Stock Service initialized.")
-        else:
-            self.stock_service = None
-            logger.warning("FINNHUB_API_KEY not set. Stock service is disabled.")
-            
-        logger.debug("AI, Storage, Web, Utility, Weather, News, and Calendar Services initialized.")
+        # 將所有服務打包成一個字典
+        services = self._initialize_services()
+        logger.debug("All services initialized.")
 
         # 初始化 LINE Bot API 客戶端
-        self.configuration = Configuration(access_token=self.config.line_channel_access_token)
+        self.configuration = Configuration(
+            access_token=self.config.line_channel_access_token)
         self.api_client = ApiClient(self.configuration)
         self.line_bot_api = MessagingApi(self.api_client)
         logger.debug("LINE Bot API client initialized.")
 
         # 初始化訊息處理器和 Webhook
-        self.text_handler = TextMessageHandler(
-            core_service=self.core_service,
-            parsing_service=self.parsing_service,
-            image_service=self.image_service,
-            text_service=self.text_service,
-            storage_service=self.storage_service,
-            web_service=self.web_service,
-            utility_service=self.utility_service,
-            weather_service=self.weather_service,
-            news_service=self.news_service,
-            calendar_service=self.calendar_service,
-            stock_service=self.stock_service,
-            line_bot_api=self.line_bot_api,
-            image_service_for_router=self.image_service,
-            web_service_for_router=self.web_service,
-            text_service_for_router=self.text_service,
-            parsing_service_for_router=self.parsing_service,
-            weather_service_for_router=self.weather_service,
-            news_service_for_router=self.news_service,
-            stock_service_for_router=self.stock_service,
-            calendar_service_for_router=self.calendar_service
-        )
-        # ImageMessageHandler 和 LocationMessageHandler 也需要更新以接收新的服務
-        # 暫時傳入所有服務，以便後續重構
+        self.text_handler = TextMessageHandler(services, self.line_bot_api)
         self.image_handler = ImageMessageHandler(
-            core_service=self.core_service,
-            parsing_service=self.parsing_service,
-            image_service=self.image_service,
-            text_service=self.text_service,
-            storage_service=self.storage_service
-        )
+            self.line_bot_api, services['storage'])
         self.location_handler = LocationMessageHandler(
-            core_service=self.core_service,
-            parsing_service=self.parsing_service,
-            image_service=self.image_service,
-            text_service=self.text_service,
-            storage_service=self.storage_service
-        )
+            self.line_bot_api, services['storage'])
 
-        # 將 access token 傳遞給處理器以使用 loading animation
-        self.text_handler.line_channel_access_token = self.config.line_channel_access_token
-        self.image_handler.line_channel_access_token = self.config.line_channel_access_token
-        self.location_handler.line_channel_access_token = self.config.line_channel_access_token
         self.handler = WebhookHandler(self.config.line_channel_secret)
         logger.debug("Message handlers and Webhook handler initialized.")
-        
+
         self._register_routes()
         self._register_handlers()
-        
+
         # 在應用程式啟動時設定圖文選單
         self._setup_default_rich_menu()
-        
+
         logger.info("LINE Bot application initialization complete.")
+
+    def _initialize_services(self) -> dict:
+        """初始化所有服務並返回一個字典。"""
+        core_service = AICoreService(self.config)
+        stock_service = None
+        if self.config.finnhub_api_key:
+            stock_service = StockService(self.config.finnhub_api_key)
+            logger.debug("Stock Service initialized.")
+        else:
+            logger.warning(
+                "FINNHUB_API_KEY not set. Stock service is disabled.")
+
+        return {
+            "core": core_service,
+            "parsing": AIParsingService(self.config, core_service),
+            "image": AIImageService(self.config, core_service),
+            "text": AITextService(core_service),
+            "storage": StorageService(self.config),
+            "web": WebService(),
+            "weather": WeatherService(self.config.openweather_api_key),
+            "news": NewsService(self.config.news_api_key),
+            "calendar": CalendarService(),
+            "stock": stock_service
+        }
 
     def _initialize_vertex_ai(self):
         """使用環境變數中的 JSON 字串來初始化 Vertex AI"""
         try:
             gcp_json_str = self.config.gcp_service_account_json
             credentials_info = json.loads(gcp_json_str)
-            credentials = service_account.Credentials.from_service_account_info(credentials_info)
-            vertexai.init(project=self.config.gcp_project_id, location=self.config.gcp_location, credentials=credentials)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info)
+            vertexai.init(
+                project=self.config.gcp_project_id,
+                location=self.config.gcp_location,
+                credentials=credentials)
             logger.info("Vertex AI initialized successfully.")
         except Exception as e:
-            logger.error(f"Vertex AI initialization failed: {e}", exc_info=True)
+            logger.error(
+                f"Vertex AI initialization failed: {e}",
+                exc_info=True)
 
     def _setup_default_rich_menu(self):
-        """檢查並設定預設的圖文選單，會強制刪除舊的同名選單"""
+        """使用 line-bot-sdk 檢查並設定預設的圖文選單。"""
         rich_menu_name = "Default Rich Menu"
-        headers = {"Authorization": f"Bearer {self.config.line_channel_access_token}"}
-        
-        # 1. 取得所有圖文選單並刪除同名的舊選單
         try:
-            response = requests.get("https://api.line.me/v2/bot/richmenu/list", headers=headers, timeout=5)
-            response.raise_for_status()
-            existing_menus = response.json().get('richmenus', [])
-            for menu in existing_menus:
-                if menu.get('name') == rich_menu_name:
-                    delete_url = f"https://api.line.me/v2/bot/richmenu/{menu['richMenuId']}"
-                    delete_response = requests.delete(delete_url, headers=headers)
-                    if delete_response.status_code == 200:
-                        logger.info(f"Deleted old rich menu with ID: {menu['richMenuId']}")
-                    else:
-                        logger.warning(f"Failed to delete old rich menu {menu['richMenuId']}: {delete_response.text}")
-        except requests.RequestException as e:
-            logger.error(f"Failed to get or delete rich menu list: {e}")
-            # 即使刪除失敗，也繼續嘗試建立新的
+            # 1. 取得所有圖文選單並刪除同名的舊選單
+            rich_menu_list = self.line_bot_api.get_rich_menu_list()
+            for menu in rich_menu_list.richmenus:
+                if menu.name == rich_menu_name:
+                    logger.info(f"Deleting old rich menu: {menu.rich_menu_id}")
+                    self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
 
-        logger.info(f"Proceeding to create new rich menu '{rich_menu_name}'...")
-        
-        # 2. 建立圖文選單
-        try:
-            with open('scripts/rich_menu.json', 'r') as f:
-                rich_menu_data = json.load(f)
-        except FileNotFoundError:
-            logger.error("scripts/rich_menu.json not found. Cannot set up rich menu.")
-            return
-            
-        rich_menu_data['name'] = rich_menu_name
-        
-        response = requests.post(
-            "https://api.line.me/v2/bot/richmenu",
-            headers={**headers, "Content-Type": "application/json"},
-            data=json.dumps(rich_menu_data)
-        )
-        if response.status_code != 200:
-            logger.error(f"Error creating rich menu: {response.status_code} {response.text}")
-            return
-        rich_menu_id = response.json()['richMenuId']
-        logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
+            # 2. 建立圖文選單
+            logger.info(f"Creating new rich menu: '{rich_menu_name}'")
+            with open('scripts/rich_menu.json', 'r', encoding='utf-8') as f:
+                rich_menu_json = json.load(f)
+            rich_menu_json['name'] = rich_menu_name
+            rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
+            rich_menu_id = self.line_bot_api.create_rich_menu(
+                rich_menu_request=rich_menu_to_create)
+            logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
 
-        # 3. 上傳圖片
-        try:
+            # 3. 上傳圖片
             with open('scripts/rich_menu_background.png', 'rb') as f:
-                image_data = f.read()
-        except FileNotFoundError:
-            logger.error("scripts/rich_menu_background.png not found. Cannot upload image.")
-            return
-            
-        upload_response = requests.post(
-            f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
-            headers={**headers, "Content-Type": "image/png"},
-            data=image_data
-        )
-        if upload_response.status_code != 200:
-            logger.error(f"Error uploading rich menu image: {upload_response.status_code} {upload_response.text}")
-            return
-        logger.info("Rich menu image uploaded successfully.")
+                self.line_bot_api.upload_rich_menu_image(
+                    rich_menu_id, f.read(), 'image/png')
+            logger.info("Rich menu image uploaded successfully.")
 
-        # 4. 設為預設
-        default_response = requests.post(
-            f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
-            headers=headers
-        )
-        if default_response.status_code != 200:
-            logger.error(f"Error setting default rich menu: {default_response.status_code} {default_response.text}")
-            return
-        logger.info("Rich menu set as default successfully.")
+            # 4. 設為預設
+            self.line_bot_api.set_default_rich_menu(rich_menu_id)
+            logger.info("Rich menu set as default successfully.")
 
-            
+        except FileNotFoundError as e:
+            logger.error(
+                f"Rich menu setup failed: {e}. Make sure 'scripts/rich_menu.json' "
+                "and 'scripts/rich_menu_background.png' exist.")
+        except LineBotApiError as e:
+            logger.error(
+                f"LINE API Error during rich menu setup: {e.status_code} "
+                f"{e.error.message}")
+            for detail in e.error.details:
+                logger.error(f"  - {detail.property}: {detail.message}")
+        except Exception as e:
+            logger.error(
+                f"An unexpected error occurred during rich menu setup: {e}",
+                exc_info=True)
+
     def _register_routes(self):
         """註冊 Flask 路由"""
         @self.app.route("/")
@@ -235,7 +182,8 @@ class LineBotApp:
         @self.app.route("/callback", methods=['POST'])
         def callback():
             signature = request.headers.get('X-Line-Signature')
-            if not signature: abort(400)
+            if not signature:
+                abort(400)
             body = request.get_data(as_text=True)
             try:
                 self.handler.handle(body, signature)
@@ -250,19 +198,21 @@ class LineBotApp:
         """註冊 LINE 事件處理器"""
         @self.handler.add(MessageEvent, message=TextMessageContent)
         def handle_text(event):
-            self.text_handler.handle(event, self.line_bot_api)
+            self.text_handler.handle(event)
 
         @self.handler.add(MessageEvent, message=ImageMessageContent)
         def handle_image(event):
-            self.image_handler.handle(event, self.line_bot_api)
+            self.image_handler.handle(event)
 
         @self.handler.add(MessageEvent, message=LocationMessageContent)
         def handle_location(event):
-            self.location_handler.handle(event, self.line_bot_api)
+            self.location_handler.handle(event)
 
         @self.handler.add(PostbackEvent)
         def handle_postback(event):
-            self.text_handler.handle_postback(event, self.line_bot_api)
+            # Postback 目前由 TextMessageHandler 處理，因為它有 router
+            self.text_handler.handle(event)
+
 
 def create_app() -> Flask:
     """建立 Flask 應用程式實例 (供 Gunicorn 使用)"""
@@ -270,13 +220,14 @@ def create_app() -> Flask:
     bot_app = LineBotApp()
     return bot_app.app
 
+
 if __name__ == "__main__":
     try:
         logger.info("Running app.py directly. This is for local development.")
         bot_app = LineBotApp()
         port = bot_app.config.port
         debug_mode = bot_app.config.debug
-        
+
         if debug_mode:
             bot_app.app.run(host="0.0.0.0", port=port, debug=True)
         else:
@@ -284,5 +235,7 @@ if __name__ == "__main__":
             serve(bot_app.app, host="0.0.0.0", port=port)
 
     except Exception:
-        logger.critical("Application startup failed critically.", exc_info=True)
+        logger.critical(
+            "Application startup failed critically.",
+            exc_info=True)
         sys.exit(1)

@@ -6,11 +6,13 @@ services:
     autoDeploy: true
     buildCommand: |
       pip install --upgrade pip
+      python3 -m venv venv
+      source venv/bin/activate
       pip install -r requirements.txt
     startCommand: |
       gunicorn "app:create_app()" \
         --bind 0.0.0.0:$PORT \
-        --workers 3 \
+        --workers 2 \
         --timeout 60 \
         --keep-alive 5 \
         --max-requests 2000 \

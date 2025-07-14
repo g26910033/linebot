@@ -4,10 +4,14 @@
 from linebot.v3.messaging import MessagingApi, TextMessage
 from services.storage_service import StorageService
 
+
 class ClearMemoryHandler:
     """處理 '清除對話' 等指令的類別。"""
 
-    def __init__(self, storage_service: StorageService, line_bot_api: MessagingApi):
+    def __init__(
+            self,
+            storage_service: StorageService,
+            line_bot_api: MessagingApi):
         self.storage_service = storage_service
         self.line_bot_api = line_bot_api
 

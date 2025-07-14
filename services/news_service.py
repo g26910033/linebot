@@ -7,6 +7,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class NewsService:
     """提供新聞查詢功能的服務。"""
 
@@ -24,8 +25,8 @@ class NewsService:
         self.base_url = "https://newsapi.org/v2/everything"
         params = {
             'q': '台灣',
-            'language': 'zh', # 優先顯示中文內容
-            'sortBy': 'publishedAt', # 按發布時間排序
+            'language': 'zh',  # 優先顯示中文內容
+            'sortBy': 'publishedAt',  # 按發布時間排序
             'pageSize': page_size,
             'apiKey': self.api_key
         }
@@ -47,8 +48,8 @@ class NewsService:
                 title_parts = title.split(' - ')
                 if len(title_parts) > 1:
                     title = ' - '.join(title_parts[:-1])
-                
-                formatted_news.append(f"{i+1}. {title}\n{url}\n")
+
+                formatted_news.append(f"{i + 1}. {title}\n{url}\n")
 
             return "\n".join(formatted_news)
 

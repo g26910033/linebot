@@ -1,8 +1,7 @@
-
 # Render 平台最佳化 Dockerfile (多階段構建)
 
 # --- 階段 1: 構建環境 ---
-FROM python:3.11-slim as builder
+FROM python:3.13-slim as builder
 
 # 1. 設定工作目錄
 WORKDIR /app
@@ -17,11 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --upgrade pip wheel setuptools
 
 # 4. 複製需求檔案並安裝
-COPY requirements-minimal.txt ./
-RUN pip install --no-cache-dir -r requirements-minimal.txt
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # --- 階段 2: 生產環境 ---
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # 1. 設定工作目錄
 WORKDIR /app
@@ -33,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 3. 從構建環境複製已安裝的套件
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 
 # 4. 複製應用程式碼
 COPY . .
@@ -53,7 +52,7 @@ EXPOSE $PORT
 # 8. 預設啟動命令
 CMD gunicorn "app:create_app()" \
     --bind 0.0.0.0:$PORT \
-    --workers 3 \
+    --workers 2 \
     --timeout 60 \
     --keep-alive 5 \
     --max-requests 2000 \

@@ -7,10 +7,12 @@ from .core import AICoreService
 
 logger = get_logger(__name__)
 
+
 class AITextService:
     """
     AI 文字處理服務類別，封裝與純文字相關的 AI 互動。
     """
+
     def __init__(self, core_service: AICoreService):
         self.core_service = core_service
 
@@ -25,7 +27,7 @@ class AITextService:
         """使用 AI 模型總結長篇文章"""
         if not self.core_service.is_available():
             return "AI 服務未啟用。"
-        
+
         truncated_text = text[:max_length]
 
         prompt = f"""請你扮演一位專業的內容分析師。請用繁體中文，為以下文章產生一份約 200-300 字的精簡摘要，並在最後列出 3 個關鍵重點。
@@ -35,7 +37,9 @@ class AITextService:
         try:
             return self._generate_content(prompt)
         except Exception as e:
-            logger.error(f"Error during text summarization: {e}", exc_info=True)
+            logger.error(
+                f"Error during text summarization: {e}",
+                exc_info=True)
             return "抱歉，摘要文章時發生錯誤。"
 
     def translate_text(self, user_message: str) -> str:
@@ -59,7 +63,8 @@ class AITextService:
         """
         try:
             # 這裡不需要 clean_text，因為提示已經要求純文字
-            response = self.core_service.text_vision_model.generate_content(prompt)
+            response = self.core_service.text_vision_model.generate_content(
+                prompt)
             return response.text.strip()
         except Exception as e:
             logger.error(f"Error during smart translation: {e}", exc_info=True)

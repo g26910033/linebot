@@ -3,6 +3,7 @@
 """
 from linebot.v3.messaging import MessagingApi, TextMessage
 
+
 class HelpCommandHandler:
     """處理 'help', '功能說明' 等指令的類別。"""
 

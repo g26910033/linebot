@@ -10,6 +10,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class WebService:
     """A service for fetching and parsing web content."""
 
@@ -27,7 +28,10 @@ class WebService:
     def _get_youtube_video_id(self, url: str) -> str | None:
         """從 YouTube 連結中提取影片 ID。"""
         parsed_url = urlparse(url)
-        if parsed_url.hostname in ['www.youtube.com', 'youtube.com', 'm.youtube.com']:
+        if parsed_url.hostname in [
+            'www.youtube.com',
+            'youtube.com',
+                'm.youtube.com']:
             if parsed_url.path == '/watch':
                 return parse_qs(parsed_url.query).get('v', [None])[0]
             elif parsed_url.path.startswith('/youtu.be/'):
@@ -49,33 +53,42 @@ class WebService:
                 for t in transcript_list:
                     transcript = t
                     break
-            
+
             if transcript:
                 # 如果是自動生成字幕，嘗試翻譯成中文繁體
                 if transcript.is_generated and transcript.language_code != 'zh-TW':
                     try:
                         translated_transcript = transcript.translate('zh-TW')
-                        full_transcript = " ".join([entry['text'] for entry in translated_transcript.fetch()])
-                        logger.info(f"Translated YouTube transcript to zh-TW for video {video_id}")
+                        full_transcript = " ".join(
+                            [entry['text'] for entry in translated_transcript.fetch()])
+                        logger.info(
+                            f"Translated YouTube transcript to zh-TW for video {video_id}")
                         return full_transcript
                     except Exception as e:
-                        logger.warning(f"Failed to translate YouTube transcript for {video_id}: {e}")
+                        logger.warning(
+                            f"Failed to translate YouTube transcript for {video_id}: {e}")
                         # 如果翻譯失敗，則使用原始字幕
-                        full_transcript = " ".join([entry['text'] for entry in transcript.fetch()])
+                        full_transcript = " ".join(
+                            [entry['text'] for entry in transcript.fetch()])
                         return full_transcript
                 else:
-                    full_transcript = " ".join([entry['text'] for entry in transcript.fetch()])
-                    logger.info(f"Fetched YouTube transcript for video {video_id}")
+                    full_transcript = " ".join(
+                        [entry['text'] for entry in transcript.fetch()])
+                    logger.info(
+                        f"Fetched YouTube transcript for video {video_id}")
                     return full_transcript
             return None
         except NoTranscriptFound:
-            logger.warning(f"No transcript found for YouTube video ID: {video_id}")
+            logger.warning(
+                f"No transcript found for YouTube video ID: {video_id}")
             return None
         except TranscriptsDisabled:
-            logger.warning(f"Transcripts are disabled for YouTube video ID: {video_id}")
+            logger.warning(
+                f"Transcripts are disabled for YouTube video ID: {video_id}")
             return None
         except Exception as e:
-            logger.error(f"Error fetching YouTube transcript for {video_id}: {e}")
+            logger.error(
+                f"Error fetching YouTube transcript for {video_id}: {e}")
             return None
 
     def fetch_url_content(self, url: str) -> str | None:
@@ -89,15 +102,18 @@ class WebService:
         """
         video_id = self._get_youtube_video_id(url)
         if video_id:
-            logger.info(f"Detected YouTube URL, attempting to fetch transcript for video ID: {video_id}")
+            logger.info(
+                f"Detected YouTube URL, attempting to fetch transcript for video ID: {video_id}")
             transcript = self._get_youtube_transcript(video_id)
             if transcript:
                 return transcript
             else:
-                logger.warning(f"Could not get YouTube transcript for {video_id}, falling back to general web content fetch.")
+                logger.warning(
+                    f"Could not get YouTube transcript for {video_id}, falling back to general web content fetch.")
 
         try:
-            response = requests.get(url, headers=self.headers, timeout=self.timeout)
+            response = requests.get(
+                url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -106,7 +122,8 @@ class WebService:
 
             text = soup.get_text()
             lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            chunks = (phrase.strip()
+                      for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
 
             return text

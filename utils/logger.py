@@ -7,8 +7,9 @@ import logging
 import sys
 from typing import Optional
 
-DEFAULT_LOG_FORMAT: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-DEFAULT_DATE_FORMAT: str = '%Y-%m-%d %H:%M:%S'
+DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
 
 def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     """
@@ -16,7 +17,8 @@ def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
 
     Args:
         name (str): 記錄器名稱。
-        level (Optional[str]): 日誌等級 (DEBUG, INFO, WARNING, ERROR, CRITICAL)。
+        level (Optional[str]): 日誌等級 (DEBUG, INFO, WARNING, ERROR,
+                                       CRITICAL)。
 
     Returns:
         logging.Logger: 配置好的日誌記錄器。
@@ -28,11 +30,14 @@ def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     logger.setLevel(log_level)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
-    formatter = logging.Formatter(DEFAULT_LOG_FORMAT, datefmt=DEFAULT_DATE_FORMAT)
+    formatter = logging.Formatter(
+        DEFAULT_LOG_FORMAT,
+        datefmt=DEFAULT_DATE_FORMAT)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     logger.propagate = False
     return logger
+
 
 def setup_root_logger(level: str = 'INFO') -> None:
     """
@@ -42,8 +47,12 @@ def setup_root_logger(level: str = 'INFO') -> None:
         level (str): 日誌等級 (DEBUG, INFO, WARNING, ERROR, CRITICAL)。
     """
     logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
+        level=getattr(
+            logging,
+            level.upper(),
+            logging.INFO),
         format=DEFAULT_LOG_FORMAT,
         datefmt=DEFAULT_DATE_FORMAT,
-        handlers=[logging.StreamHandler(sys.stdout)]
-    )
+        handlers=[
+            logging.StreamHandler(
+                sys.stdout)])

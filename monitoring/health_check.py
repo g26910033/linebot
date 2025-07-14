@@ -11,7 +11,6 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-
 class HealthChecker:
     """
     健康檢查器。

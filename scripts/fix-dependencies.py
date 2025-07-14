@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 依賴修復腳本
@@ -48,7 +47,7 @@ def run_pip_command(args: List[str], success_msg: str, fail_msg: str) -> bool:
             print(f"詳細輸出: {e.stdout.strip()}")
         return False
     except FileNotFoundError:
-        print(f"❌ 命令 'pip' 或 Python 解釋器未找到。請確認 Python 已正確安裝並在 PATH 中。")
+        print("❌ 命令 'pip' 或 Python 解釋器未找到。請確認 Python 已正確安裝並在 PATH 中。")
         return False
     except Exception as e:
         print(f"❌ 執行 pip 命令時發生未預期錯誤: {e}")
@@ -195,6 +194,7 @@ def main() -> None:
         print("⚠️ 某些依賴可能未能成功安裝。請檢查上述錯誤訊息以了解詳情。")
     print("\n🎉 依賴修復與環境檢查完成！請檢查上述訊息以確認所有問題是否已解決。")
     print("如果問題仍然存在，請截圖錯誤訊息並尋求進一步協助。")
+
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 依賴檢查腳本
