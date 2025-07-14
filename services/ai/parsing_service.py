@@ -37,37 +37,18 @@ class AIParsingService:
         tw_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
         prompt = f"""
-        你是一個強大的指令解析引擎。你的任務是分析使用者輸入的文字，並以純粹的 JSON 格式回傳他們的意圖 (intent) 和相關數據 (data)。
-
-        可能的意圖包括：
-        - "weather": 查詢天氣
-        - "stock": 查詢股價
-        - "news": 查詢新聞
-        - "calendar": 新增日曆行程
-        - "translation": 翻譯文字
-        - "nearby_search": 搜尋附近地點
-        - "general_chat": 一般閒聊或無法識別的指令
-
-        解析規則：
-        1.  **天氣**: 如果文字和天氣相關，解析出 "city" 和 "type" ("current" 或 "forecast")。
-        2.  **股價**: 如果文字和股價相關，解析出 "symbol"。
-        3.  **新聞**: 如果文字提到「新聞」或「頭條」，意圖就是 "news"，data 為空。
-        4.  **日曆**: 如果文字和行程、提醒相關，解析出 "title", "start_time", "end_time"。
-        5.  **翻譯**: 如果文字包含「翻譯」、「翻成」等，解析出 "text_to_translate" 和 "target_language"。
-        6.  **地點搜尋**: 如果文字包含「附近」、「找」、「搜尋」等，解析出 "query"。
-        7.  **通用對話**: 如果不符合以上任何意圖，意圖就是 "general_chat"。
-
-        你的回應必須是單一的 JSON 物件，格式如下：
-        {{
-          "intent": "意圖名稱",
-          "data": {{ "鍵": "值", ... }}
-        }}
-
-        ---
-        目前台灣時間: {current_time}
-        使用者輸入: "{text}"
-        ---
-        JSON 輸出:
+        Analyze the user input and return a single JSON object with "intent" and "data".
+        Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "general_chat".
+        - weather: requires "city" and "type" (current/forecast).
+        - stock: requires "symbol".
+        - news: data is empty.
+        - calendar: requires "title", "start_time", "end_time".
+        - translation: requires "text_to_translate", "target_language".
+        - nearby_search: requires "query".
+        - general_chat: for anything else.
+        Current time: {current_time}.
+        User input: "{text}"
+        JSON output:
         """
         try:
             cleaned_response = self._generate_content(prompt)
