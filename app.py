@@ -163,9 +163,8 @@ class LineBotApp:
 
             # 3. 上傳圖片
             logger.info(f"Uploading image for rich menu ID: {rich_menu_id}")
-            api_blob = MessagingApiBlob(self.api_client)
             with open(png_path, 'rb') as f:
-                api_blob.upload_rich_menu_image(
+                self.line_bot_api.upload_rich_menu_image(
                     rich_menu_id=rich_menu_id, body=f.read(),
                     _headers={'Content-Type': 'image/png'})
             logger.info("Rich menu image uploaded successfully.")

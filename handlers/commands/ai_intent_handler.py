@@ -173,7 +173,6 @@ class AIIntentHandler:
                 self.line_bot_api.push_message(push_request)
                 return
 
-            # 呼叫 parsing_service 來搜尋地點
             search_results = self.parsing_service.search_location(
                 query=query,
                 is_nearby=True,
@@ -198,7 +197,6 @@ class AIIntentHandler:
         for place in places:
             display_name = place.get('displayName', {}).get('text', '無名稱')
             address = place.get('formattedAddress', '無地址')
-            # 建立 Google Maps 連結
             maps_url = f"https://www.google.com/maps/search/?api=1&query={display_name.replace(' ', '+')}+{address.replace(' ', '+')}"
 
             bubble = {

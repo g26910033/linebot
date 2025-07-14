@@ -144,6 +144,7 @@ class TextMessageHandler(BaseMessageHandler):
             self, user_id: str, prompt: str, reply_token: str):
         """處理使用者輸入的以圖生圖提示詞。"""
         self.storage_service.set_user_state(user_id, "") # 清除狀態
+        cleaned_prompt = prompt.strip().strip('`') # 清除頭尾的 ` 符號
         last_image_id = self.storage_service.get_user_last_image_id(user_id)
 
         if not last_image_id:
@@ -162,7 +163,7 @@ class TextMessageHandler(BaseMessageHandler):
 
                 # 生成新圖片
                 image_bytes, status_msg = self.image_service.generate_image_from_image(
-                    base_image_bytes, prompt)
+                    base_image_bytes, cleaned_prompt)
 
                 if image_bytes:
                     image_url, upload_status = self.storage_service.upload_image(image_bytes)
@@ -185,7 +186,7 @@ class TextMessageHandler(BaseMessageHandler):
         # 先給予一個快速的回覆，避免 token 過期
         initial_reply = ReplyMessageRequest(
             reply_token=reply_token,
-            messages=[TextMessage(text=f"好的，正在為您修改圖片，請稍候...")])
+            messages=[TextMessage(text=f"好的，正在為您使用「{cleaned_prompt}」的風格修改圖片，請稍候...")])
         self.line_bot_api.reply_message(initial_reply)
 
         threading.Thread(target=task).start()
