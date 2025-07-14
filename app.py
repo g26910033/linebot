@@ -7,6 +7,7 @@
 
 import os
 import sys
+import requests
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -100,6 +101,10 @@ class LineBotApp:
         
         self._register_routes()
         self._register_handlers()
+        
+        # 在應用程式啟動時設定圖文選單
+        self._setup_default_rich_menu()
+        
         logger.info("LINE Bot application initialization complete.")
 
     def _initialize_vertex_ai(self):
@@ -112,6 +117,76 @@ class LineBotApp:
             logger.info("Vertex AI initialized successfully.")
         except Exception as e:
             logger.error(f"Vertex AI initialization failed: {e}", exc_info=True)
+
+    def _setup_default_rich_menu(self):
+        """檢查並設定預設的圖文選單"""
+        rich_menu_name = "Default Rich Menu"
+        headers = {"Authorization": f"Bearer {self.config.line_channel_access_token}"}
+        
+        # 1. 檢查是否已存在同名的圖文選單
+        try:
+            response = requests.get("https://api.line.me/v2/bot/richmenu/list", headers=headers, timeout=5)
+            response.raise_for_status()
+            existing_menus = response.json().get('richmenus', [])
+            for menu in existing_menus:
+                if menu.get('name') == rich_menu_name:
+                    logger.info(f"Rich menu '{rich_menu_name}' already exists. Skipping setup.")
+                    return
+        except requests.RequestException as e:
+            logger.error(f"Failed to get rich menu list: {e}")
+            return # 如果無法檢查，就先不執行後續動作
+
+        logger.info(f"Rich menu '{rich_menu_name}' not found. Starting setup...")
+        
+        # 2. 建立圖文選單
+        try:
+            with open('scripts/rich_menu.json', 'r') as f:
+                rich_menu_data = json.load(f)
+        except FileNotFoundError:
+            logger.error("scripts/rich_menu.json not found. Cannot set up rich menu.")
+            return
+            
+        rich_menu_data['name'] = rich_menu_name # 確保名稱一致
+        
+        response = requests.post(
+            "https://api.line.me/v2/bot/richmenu",
+            headers={**headers, "Content-Type": "application/json"},
+            data=json.dumps(rich_menu_data)
+        )
+        if response.status_code != 200:
+            logger.error(f"Error creating rich menu: {response.status_code} {response.text}")
+            return
+        rich_menu_id = response.json()['richMenuId']
+        logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")
+
+        # 3. 上傳圖片
+        try:
+            with open('scripts/rich_menu_background.png', 'rb') as f:
+                image_data = f.read()
+        except FileNotFoundError:
+            logger.error("scripts/rich_menu_background.png not found. Cannot upload image.")
+            return
+            
+        upload_response = requests.post(
+            f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
+            headers={**headers, "Content-Type": "image/png"},
+            data=image_data
+        )
+        if upload_response.status_code != 200:
+            logger.error(f"Error uploading rich menu image: {upload_response.status_code} {upload_response.text}")
+            return
+        logger.info("Rich menu image uploaded successfully.")
+
+        # 4. 設為預設
+        default_response = requests.post(
+            f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
+            headers=headers
+        )
+        if default_response.status_code != 200:
+            logger.error(f"Error setting default rich menu: {default_response.status_code} {default_response.text}")
+            return
+        logger.info("Rich menu set as default successfully.")
+
             
     def _register_routes(self):
         """註冊 Flask 路由"""
@@ -149,11 +224,7 @@ class LineBotApp:
 
         @self.handler.add(PostbackEvent)
         def handle_postback(event):
-            # 暫時將 Postback 交給 TextMessageHandler 處理
-            # 未來若有更複雜的 Postback 邏輯，可以建立專門的 PostbackHandler
             self.text_handler.handle_postback(event, self.line_bot_api)
-
-# --- 工廠函式與主程式入口 ---
 
 def create_app() -> Flask:
     """建立 Flask 應用程式實例 (供 Gunicorn 使用)"""
@@ -161,7 +232,6 @@ def create_app() -> Flask:
     bot_app = LineBotApp()
     return bot_app.app
 
-# 【核心修正】將原本 main.py 的啟動邏輯整合進來，並確保有內容
 if __name__ == "__main__":
     try:
         logger.info("Running app.py directly. This is for local development.")
