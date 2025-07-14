@@ -19,9 +19,9 @@ logger = get_logger(__name__)
 class BaseMessageHandler:
     """所有處理器的基類，提供共用方法。"""
 
-    def __init__(self, configuration: Configuration,
+    def __init__(self, line_bot_api: MessagingApi,
                  storage_service: StorageService):
-        self.configuration = configuration
+        self.line_bot_api = line_bot_api
         self.storage_service = storage_service
 
 
@@ -30,11 +30,11 @@ class TextMessageHandler(BaseMessageHandler):
     最終的文字訊息處理器。
     """
 
-    def __init__(self, services: dict, configuration: Configuration):
-        super().__init__(configuration, services['storage'])
+    def __init__(self, services: dict, line_bot_api: MessagingApi):
+        super().__init__(line_bot_api, services['storage'])
         self.core_service = services['core']
         self.image_service = services['image']
-        self.router = Router(services, configuration)
+        self.router = Router(services, line_bot_api)
 
     def handle(self, event: MessageEvent):
         """處理文字訊息。"""
@@ -71,25 +71,18 @@ class TextMessageHandler(BaseMessageHandler):
                     user_message, history)
                 self.storage_service.save_chat_history(
                     user_id, updated_history)
-                with ApiClient(self.configuration) as api_client:
-                    line_bot_api = MessagingApi(api_client)
-                    push_request = PushMessageRequest(
-                        to=user_id,
-                        messages=[TextMessage(text=ai_response)]
-                    )
-                    line_bot_api.push_message(push_request)
+                push_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text=ai_response)]
+                )
+                self.line_bot_api.push_message(push_request)
             except Exception as e:
                 logger.error(f"Error in chat task for user {user_id}: {e}", exc_info=True)
-                try:
-                    with ApiClient(self.configuration) as api_client:
-                        line_bot_api = MessagingApi(api_client)
-                        error_request = PushMessageRequest(
-                            to=user_id,
-                            messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題。")]
-                        )
-                        line_bot_api.push_message(error_request)
-                except Exception as api_e:
-                    logger.error(f"Failed to send error message to user {user_id}: {api_e}", exc_info=True)
+                error_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題。")]
+                )
+                self.line_bot_api.push_message(error_request)
         threading.Thread(target=task).start()
 
     def _handle_image_analysis(self, user_id: str, reply_token: str):
@@ -99,46 +92,35 @@ class TextMessageHandler(BaseMessageHandler):
                 last_image_id = self.storage_service.get_user_last_image_id(user_id)
                 if not last_image_id:
                     reply_text = "請您先上傳一張圖片，我才能為您分析喔！"
-                    with ApiClient(self.configuration) as api_client:
-                        line_bot_api = MessagingApi(api_client)
-                        push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=reply_text)])
-                        line_bot_api.push_message(push_request)
+                    push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=reply_text)])
+                    self.line_bot_api.push_message(push_request)
                     return
 
-                with ApiClient(self.configuration) as api_client:
-                    line_bot_api = MessagingApi(api_client)
-                    message_content = line_bot_api.get_message_content(message_id=last_image_id)
-                    image_data = message_content
-                    analysis_result = self.image_service.analyze_image(image_data)
-                    push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)])
-                    line_bot_api.push_message(push_request)
+                message_content = self.line_bot_api.get_message_content(message_id=last_image_id)
+                image_data = message_content
+                analysis_result = self.image_service.analyze_image(image_data)
+                push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)])
+                self.line_bot_api.push_message(push_request)
             except Exception as e:
                 logger.error(f"Error during image analysis for user {user_id}: {e}", exc_info=True)
-                try:
-                    with ApiClient(self.configuration) as api_client:
-                        line_bot_api = MessagingApi(api_client)
-                        error_text = "抱歉，分析圖片時發生錯誤，請稍後再試。"
-                        push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=error_text)])
-                        line_bot_api.push_message(push_request)
-                except Exception as api_e:
-                    logger.error(f"Failed to send error message to user {user_id}: {api_e}", exc_info=True)
+                error_text = "抱歉，分析圖片時發生錯誤，請稍後再試。"
+                push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=error_text)])
+                self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
     def _handle_image_to_image_init(self, user_id: str, reply_token: str):
         """處理以圖生圖的初始指令。"""
-        with ApiClient(self.configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            last_image_id = self.storage_service.get_user_last_image_id(user_id)
-            if not last_image_id:
-                reply_text = "請您先上傳一張要做為基底的圖片喔！"
-                reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
-                line_bot_api.reply_message(reply_request)
-                return
-
-            self.storage_service.set_user_state(user_id, "waiting_image_prompt")
-            reply_text = "收到！請現在用文字告訴我，您想如何修改這張圖片？（例如：`讓它變成梵谷的風格`）"
+        last_image_id = self.storage_service.get_user_last_image_id(user_id)
+        if not last_image_id:
+            reply_text = "請您先上傳一張要做為基底的圖片喔！"
             reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
-            line_bot_api.reply_message(reply_request)
+            self.line_bot_api.reply_message(reply_request)
+            return
+
+        self.storage_service.set_user_state(user_id, "waiting_image_prompt")
+        reply_text = "收到！請現在用文字告訴我，您想如何修改這張圖片？（例如：`讓它變成梵谷的風格`）"
+        reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+        self.line_bot_api.reply_message(reply_request)
 
     def _handle_image_to_image_prompt(self, user_id: str, prompt: str, reply_token: str):
         """處理使用者輸入的以圖生圖提示詞。"""
@@ -146,44 +128,35 @@ class TextMessageHandler(BaseMessageHandler):
         cleaned_prompt = prompt.strip().strip('`')
         last_image_id = self.storage_service.get_user_last_image_id(user_id)
 
-        with ApiClient(self.configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            if not last_image_id:
-                reply_text = "抱歉，我找不到您上次傳送的圖片，請重新上傳一次。"
-                reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
-                line_bot_api.reply_message(reply_request)
-                return
+        if not last_image_id:
+            reply_text = "抱歉，我找不到您上次傳送的圖片，請重新上傳一次。"
+            reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+            self.line_bot_api.reply_message(reply_request)
+            return
 
-            initial_reply = ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text=f"好的，正在為您使用「{cleaned_prompt}」的風格修改圖片，請稍候...")])
-            line_bot_api.reply_message(initial_reply)
+        initial_reply = ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=f"好的，正在為您使用「{cleaned_prompt}」的風格修改圖片，請稍候...")])
+        self.line_bot_api.reply_message(initial_reply)
 
         def task():
             try:
-                with ApiClient(self.configuration) as api_client:
-                    line_bot_api = MessagingApi(api_client)
-                    base_image_bytes = line_bot_api.get_message_content(message_id=last_image_id)
-                    image_bytes, status_msg = self.image_service.generate_image_from_image(base_image_bytes, cleaned_prompt)
+                base_image_bytes = self.line_bot_api.get_message_content(message_id=last_image_id)
+                image_bytes, status_msg = self.image_service.generate_image_from_image(base_image_bytes, cleaned_prompt)
 
-                    if image_bytes:
-                        image_url, upload_status = self.storage_service.upload_image(image_bytes)
-                        messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)] if image_url else [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
-                    else:
-                        messages = [TextMessage(text=f"以圖生圖失敗: {status_msg}")]
-                    
-                    push_request = PushMessageRequest(to=user_id, messages=messages)
-                    line_bot_api.push_message(push_request)
+                if image_bytes:
+                    image_url, upload_status = self.storage_service.upload_image(image_bytes)
+                    messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)] if image_url else [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
+                else:
+                    messages = [TextMessage(text=f"以圖生圖失敗: {status_msg}")]
+                
+                push_request = PushMessageRequest(to=user_id, messages=messages)
+                self.line_bot_api.push_message(push_request)
             except Exception as e:
                 logger.error(f"Error in image-to-image task for user {user_id}: {e}", exc_info=True)
-                try:
-                    with ApiClient(self.configuration) as api_client:
-                        line_bot_api = MessagingApi(api_client)
-                        error_text = "抱歉，以圖生圖時發生未預期的錯誤。"
-                        push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=error_text)])
-                        line_bot_api.push_message(push_request)
-                except Exception as api_e:
-                    logger.error(f"Failed to send error message to user {user_id}: {api_e}", exc_info=True)
+                error_text = "抱歉，以圖生圖時發生未預期的錯誤。"
+                push_request = PushMessageRequest(to=user_id, messages=[TextMessage(text=error_text)])
+                self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
 
@@ -201,13 +174,11 @@ class ImageMessageHandler(BaseMessageHandler):
             QuickReplyItem(action=QuickReplyMessageAction(label="🎨 以圖生圖", text="[指令]以圖生圖")),
         ])
         
-        with ApiClient(self.configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            reply_request = ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text="收到您的圖片了！請問您想做什麼？", quick_reply=quick_reply)]
-            )
-            line_bot_api.reply_message(reply_request)
+        reply_request = ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text="收到您的圖片了！請問您想做什麼？", quick_reply=quick_reply)]
+        )
+        self.line_bot_api.reply_message(reply_request)
 
 
 class LocationMessageHandler(BaseMessageHandler):
@@ -221,7 +192,5 @@ class LocationMessageHandler(BaseMessageHandler):
         self.storage_service.set_user_last_location(user_id, latitude, longitude)
 
         reply_text = "收到您的位置了！現在您可以問我「附近有什麼好吃的？」或「幫我找最近的咖啡廳」囉！"
-        with ApiClient(self.configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
-            line_bot_api.reply_message(reply_request)
+        reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=reply_text)])
+        self.line_bot_api.reply_message(reply_request)
