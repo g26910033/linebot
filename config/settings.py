@@ -54,13 +54,13 @@ class AppConfig:
     應用程式配置類別。
     所有環境變數與預設值型別安全管理。
     """
+    # --- 必要欄位 (無預設值) ---
     # LINE Bot 設定
     line_channel_secret: str
     line_channel_access_token: str
     # GCP 設定
     gcp_project_id: str
     gcp_service_account_json: str
-    gcp_location: str = "us-central1"
     # Cloudinary 設定
     cloudinary_cloud_name: str
     cloudinary_api_key: str
@@ -68,6 +68,11 @@ class AppConfig:
     # API 金鑰
     openweather_api_key: str
     news_api_key: str
+
+    # --- 可選/有預設值的欄位 ---
+    # GCP 設定
+    gcp_location: str = "us-central1"
+    # API 金鑰
     finnhub_api_key: Optional[str] = None
     # 應用程式行為設定
     redis_url: Optional[str] = None
