@@ -28,6 +28,10 @@ class WebService:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
+    def is_url(self, text: str) -> bool:
+        """Checks if the given text is a URL."""
+        return self._URL_PATTERN.match(text) is not None
+
     def _get_youtube_video_id(self, url: str) -> str | None:
         """從 YouTube 連結中提取影片 ID。"""
         parsed_url = urlparse(url)
@@ -45,20 +49,17 @@ class WebService:
         """獲取 YouTube 影片的字幕。"""
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            # 嘗試獲取中文繁體字幕，如果沒有則嘗試英文，最後取第一個可用的
             transcript = None
             if 'zh-TW' in transcript_list._generated_transcripts:
                 transcript = transcript_list.find_transcript(['zh-TW'])
             elif 'en' in transcript_list._generated_transcripts:
                 transcript = transcript_list.find_transcript(['en'])
             else:
-                # 嘗試獲取任何可用的字幕
                 for t in transcript_list:
                     transcript = t
                     break
 
             if transcript:
-                # 如果是自動生成字幕，嘗試翻譯成中文繁體
                 if transcript.is_generated and transcript.language_code != 'zh-TW':
                     try:
                         translated_transcript = transcript.translate('zh-TW')
@@ -70,7 +71,6 @@ class WebService:
                     except Exception as e:
                         logger.warning(
                             f"Failed to translate YouTube transcript for {video_id}: {e}")
-                        # 如果翻譯失敗，則使用原始字幕
                         full_transcript = " ".join(
                             [entry['text'] for entry in transcript.fetch()])
                         return full_transcript
@@ -98,10 +98,6 @@ class WebService:
         """
         Fetches the main text content from a given URL.
         Prioritizes YouTube transcript if it's a YouTube video.
-        Args:
-            url (str): The URL to fetch.
-        Returns:
-            str | None: The extracted text content, or None if fetching fails.
         """
         video_id = self._get_youtube_video_id(url)
         if video_id:
@@ -136,7 +132,3 @@ class WebService:
         except Exception as e:
             logger.error(f"Error processing URL content from {url}: {e}")
             return None
-
-    def is_url(self, text: str) -> bool:
-        """Checks if the given text is a URL."""
-        return self._URL_PATTERN.match(text) is not None

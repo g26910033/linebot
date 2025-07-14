@@ -3,7 +3,8 @@ AI 核心服務模組
 負責與 Google Vertex AI 的基本互動，包含模型初始化和歷史對話。
 """
 import re
-from vertexai.generative_models import GenerativeModel, Part, Content
+from vertexai.generative_models import (
+    GenerativeModel, Part, Content, GenerationConfig, HarmCategory, HarmBlockThreshold)
 from config.settings import AppConfig
 from utils.logger import get_logger
 
@@ -30,7 +31,24 @@ class AICoreService:
                     f"{self.config.gcp_location}/publishers/google/models/"
                     f"{self.config.text_model_name}"
                 )
-                self.text_vision_model = GenerativeModel(model_path)
+                generation_config = GenerationConfig(
+                    temperature=0.7,
+                    top_p=1.0,
+                    top_k=32,
+                    candidate_count=1,
+                    max_output_tokens=2048,
+                )
+                safety_settings = {
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+                self.text_vision_model = GenerativeModel(
+                    model_path,
+                    generation_config=generation_config,
+                    safety_settings=safety_settings
+                )
                 logger.info(
                     f"Text/Vision model '{model_path}' loaded for AICoreService.")
         except Exception as e:
