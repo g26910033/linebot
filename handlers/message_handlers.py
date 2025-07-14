@@ -155,7 +155,7 @@ class LocationMessageHandler(BaseMessageHandler):
 
         # 儲存使用者最後分享的位置
         self.storage_service.set_user_last_location(
-            user_id, {"lat": latitude, "lon": longitude})
+            user_id, latitude, longitude)
 
         # 回覆確認訊息
         reply_text = (
