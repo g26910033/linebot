@@ -1,30 +1,65 @@
 """
 儲存服務模組
-負責與 Redis 互動，管理對話歷史、使用者狀態等。
+負責與 Redis 和 Cloudinary 互動。
 """
 import redis
 import json
-from typing import List, Dict, Any, Optional
+import cloudinary
+import cloudinary.uploader
+from typing import List, Dict, Any, Optional, Tuple
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class StorageService:
-    """提供與 Redis 互動的儲存服務。"""
+    """提供與 Redis 和 Cloudinary 互動的儲存服務。"""
 
     def __init__(self, config):
+        # Redis 初始化
         try:
             self.redis_client = redis.from_url(config.redis_url, decode_responses=True)
             self.redis_client.ping()
             logger.info("Redis client connected successfully")
-        except redis.exceptions.ConnectionError as e:
+        except (redis.exceptions.ConnectionError, TypeError) as e:
             logger.error(f"Redis connection failed: {e}", exc_info=True)
             self.redis_client = None
         
+        # Cloudinary 初始化
+        try:
+            if all([config.cloudinary_cloud_name, config.cloudinary_api_key, config.cloudinary_api_secret]):
+                cloudinary.config(
+                    cloud_name=config.cloudinary_cloud_name,
+                    api_key=config.cloudinary_api_key,
+                    api_secret=config.cloudinary_api_secret
+                )
+                logger.info("Cloudinary configured successfully")
+                self.cloudinary_enabled = True
+            else:
+                self.cloudinary_enabled = False
+                logger.warning("Cloudinary credentials not fully provided. Image upload will be disabled.")
+        except Exception as e:
+            self.cloudinary_enabled = False
+            logger.error(f"Cloudinary configuration failed: {e}", exc_info=True)
+
         self.chat_history_ttl = config.chat_history_ttl
         self.max_chat_history_length = config.max_chat_history_length
         self.nearby_query_ttl = config.nearby_query_ttl
-        self.location_ttl = 600 # 位置資訊快取 10 分鐘
+        self.location_ttl = 600
+
+    def upload_image(self, image_bytes: bytes) -> Tuple[Optional[str], str]:
+        """上傳圖片到 Cloudinary"""
+        if not self.cloudinary_enabled:
+            return None, "Cloudinary service is not configured."
+        try:
+            upload_result = cloudinary.uploader.upload(image_bytes)
+            image_url = upload_result.get('secure_url')
+            if image_url:
+                return image_url, "Upload successful."
+            else:
+                return None, "Upload to Cloudinary failed, no URL returned."
+        except Exception as e:
+            logger.error(f"Failed to upload image to Cloudinary: {e}", exc_info=True)
+            return None, str(e)
 
     def _get_key(self, user_id: str, key_type: str) -> str:
         return f"{user_id}:{key_type}"
@@ -43,7 +78,6 @@ class StorageService:
         if not self.redis_client: return
         key = self._get_key(user_id, "chat_history")
         try:
-            # 限制歷史紀錄長度
             if len(history) > self.max_chat_history_length:
                 history = history[-self.max_chat_history_length:]
             self.redis_client.set(key, json.dumps(history), ex=self.chat_history_ttl)
@@ -62,7 +96,7 @@ class StorageService:
         if not self.redis_client: return
         key = self._get_key(user_id, "last_image_id")
         try:
-            self.redis_client.set(key, message_id, ex=300)  # 圖片 ID 快取 5 分鐘
+            self.redis_client.set(key, message_id, ex=300)
         except redis.exceptions.RedisError as e:
             logger.error(f"Failed to set last image ID for {user_id}: {e}", exc_info=True)
 
@@ -79,7 +113,7 @@ class StorageService:
         if not self.redis_client: return
         key = self._get_key(user_id, "state")
         try:
-            self.redis_client.set(key, state, ex=300) # 狀態快取 5 分鐘
+            self.redis_client.set(key, state, ex=300)
         except redis.exceptions.RedisError as e:
             logger.error(f"Failed to set user state for {user_id}: {e}", exc_info=True)
 
@@ -151,10 +185,8 @@ class StorageService:
         if not self.redis_client: return None
         key = self._get_key(user_id, "todo_list")
         try:
-            # Get the item at the index before removing it
             item = self.redis_client.lindex(key, index)
             if item:
-                # lset is a bit tricky, we set a placeholder and then remove it
                 placeholder = "__DELETED__"
                 self.redis_client.lset(key, index, placeholder)
                 self.redis_client.lrem(key, 1, placeholder)

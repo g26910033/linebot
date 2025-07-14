@@ -453,7 +453,7 @@ class TextMessageHandler(MessageHandler):
                 base_image_bytes = line_bot_api_blob.get_message_content(message_id=message_id)
                 new_image_bytes, status_msg = self.ai_service.generate_image_from_image(base_image_bytes, prompt)
                 if new_image_bytes:
-                    image_url, upload_status = self.storage_service.upload_image_to_cloudinary(new_image_bytes)
+                    image_url, upload_status = self.storage_service.upload_image(new_image_bytes)
                     if image_url:
                         self._push_message_with_retry(user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)])
                     else:
@@ -475,7 +475,7 @@ class TextMessageHandler(MessageHandler):
             translated_prompt = self.ai_service.translate_prompt_for_drawing(prompt)
             image_bytes, status_msg = self.ai_service.generate_image(translated_prompt)
             if image_bytes:
-                image_url, upload_status = self.storage_service.upload_image_to_cloudinary(image_bytes)
+                image_url, upload_status = self.storage_service.upload_image(image_bytes)
                 if image_url:
                     self._push_message_with_retry(user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)])
                 else:
