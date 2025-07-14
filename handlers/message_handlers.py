@@ -199,6 +199,14 @@ class TextMessageHandler(MessageHandler):
                     threading.Thread(target=weather_task, args=(user_id, city, query_type)).start()
                     return
 
+            if user_message == "天氣/新聞":
+                quick_reply = QuickReply(items=[
+                    QuickReplyItem(action=QuickReplyMessageAction(label="🌦️ 看天氣", text="今天天氣如何")),
+                    QuickReplyItem(action=QuickReplyMessageAction(label="📰 看新聞", text="頭條新聞"))
+                ])
+                line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)]))
+                return
+            
             if self.news_service and self._is_news_command(user_message):
                 self._show_loading_animation(user_id)
                 def news_task(user_id):
@@ -246,14 +254,6 @@ class TextMessageHandler(MessageHandler):
 
             if self._is_help_command(user_message):
                 self._handle_help(reply_token, line_bot_api)
-                return
-
-            if user_message == "天氣/新聞":
-                quick_reply = QuickReply(items=[
-                    QuickReplyItem(action=QuickReplyMessageAction(label="🌦️ 看天氣", text="今天天氣如何")),
-                    QuickReplyItem(action=QuickReplyMessageAction(label="📰 看新聞", text="頭條新聞"))
-                ])
-                line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)]))
                 return
             
             if user_message == "圖片功能":

@@ -119,24 +119,28 @@ class LineBotApp:
             logger.error(f"Vertex AI initialization failed: {e}", exc_info=True)
 
     def _setup_default_rich_menu(self):
-        """檢查並設定預設的圖文選單"""
+        """檢查並設定預設的圖文選單，會強制刪除舊的同名選單"""
         rich_menu_name = "Default Rich Menu"
         headers = {"Authorization": f"Bearer {self.config.line_channel_access_token}"}
         
-        # 1. 檢查是否已存在同名的圖文選單
+        # 1. 取得所有圖文選單並刪除同名的舊選單
         try:
             response = requests.get("https://api.line.me/v2/bot/richmenu/list", headers=headers, timeout=5)
             response.raise_for_status()
             existing_menus = response.json().get('richmenus', [])
             for menu in existing_menus:
                 if menu.get('name') == rich_menu_name:
-                    logger.info(f"Rich menu '{rich_menu_name}' already exists. Skipping setup.")
-                    return
+                    delete_url = f"https://api.line.me/v2/bot/richmenu/{menu['richMenuId']}"
+                    delete_response = requests.delete(delete_url, headers=headers)
+                    if delete_response.status_code == 200:
+                        logger.info(f"Deleted old rich menu with ID: {menu['richMenuId']}")
+                    else:
+                        logger.warning(f"Failed to delete old rich menu {menu['richMenuId']}: {delete_response.text}")
         except requests.RequestException as e:
-            logger.error(f"Failed to get rich menu list: {e}")
-            return # 如果無法檢查，就先不執行後續動作
+            logger.error(f"Failed to get or delete rich menu list: {e}")
+            # 即使刪除失敗，也繼續嘗試建立新的
 
-        logger.info(f"Rich menu '{rich_menu_name}' not found. Starting setup...")
+        logger.info(f"Proceeding to create new rich menu '{rich_menu_name}'...")
         
         # 2. 建立圖文選單
         try:
@@ -146,7 +150,7 @@ class LineBotApp:
             logger.error("scripts/rich_menu.json not found. Cannot set up rich menu.")
             return
             
-        rich_menu_data['name'] = rich_menu_name # 確保名稱一致
+        rich_menu_data['name'] = rich_menu_name
         
         response = requests.post(
             "https://api.line.me/v2/bot/richmenu",
