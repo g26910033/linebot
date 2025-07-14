@@ -49,26 +49,34 @@ class LineBotApp:
 
     def __init__(self):
         logger.info("Initializing LINE Bot application...")
+
         self.config = load_config()
         logger.info("Application configuration loaded successfully.")
+
         self._initialize_vertex_ai()
+
         self.app = Flask(__name__)
 
         # 建立一個共用的 Configuration 物件
         self.configuration = Configuration(
             access_token=self.config.line_channel_access_token)
+        
+        # 建立一個共用的 ApiClient
+        self.api_client = ApiClient(self.configuration)
+        
+        # 建立一個共用的 MessagingApi
+        self.line_bot_api = MessagingApi(self.api_client)
 
         # 將所有服務打包成一個字典
         services = self._initialize_services()
         logger.debug("All services initialized.")
 
         # 初始化訊息處理器和 Webhook
-        # 注意：我們不再傳遞一個全域的 line_bot_api 物件
-        self.text_handler = TextMessageHandler(services, self.configuration)
+        self.text_handler = TextMessageHandler(services, self.line_bot_api)
         self.image_handler = ImageMessageHandler(
-            self.configuration, services['storage'])
+            self.line_bot_api, services['storage'])
         self.location_handler = LocationMessageHandler(
-            self.configuration, services['storage'])
+            self.line_bot_api, services['storage'])
 
         self.handler = WebhookHandler(self.config.line_channel_secret)
         logger.debug("Message handlers and Webhook handler initialized.")
@@ -119,7 +127,58 @@ class LineBotApp:
                 f"Vertex AI initialization failed: {e}",
                 exc_info=True)
 
-    # _setup_default_rich_menu 已被移至 scripts/setup_rich_menu.py 並在 build command 中執行
+    def _setup_default_rich_menu(self):
+        """使用 line-bot-sdk 檢查並設定預設的圖文選單。"""
+        rich_menu_name = "Default Rich Menu"
+        logger.info("--- Starting Rich Menu Setup ---")
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
+            png_path = os.path.join(
+                base_dir, 'scripts', 'rich_menu_background.png')
+            if not os.path.exists(json_path) or not os.path.exists(png_path):
+                logger.error("Rich menu files not found. Aborting setup.")
+                return
+
+            # Step 1: Delete Old Menus
+            logger.info("Step 1: Deleting old rich menus...")
+            rich_menu_list = self.line_bot_api.get_rich_menu_list()
+            for menu in rich_menu_list.richmenus:
+                if menu.name == rich_menu_name:
+                    logger.info(f"Deleting old menu: {menu.rich_menu_id}")
+                    self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
+            logger.info("Step 1 finished.")
+
+            # Step 2: Create New Menu
+            logger.info("Step 2: Creating new rich menu...")
+            with open(json_path, 'r', encoding='utf-8') as f:
+                rich_menu_json = json.load(f)
+            rich_menu_json['name'] = rich_menu_name
+            rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
+            rich_menu_id_response = self.line_bot_api.create_rich_menu(
+                rich_menu_request=rich_menu_to_create)
+            rich_menu_id = rich_menu_id_response.rich_menu_id
+            logger.info(f"Step 2 finished. New menu ID: {rich_menu_id}")
+
+            # Step 3: Upload Image
+            logger.info(f"Step 3: Uploading image for menu ID: {rich_menu_id}")
+            with open(png_path, 'rb') as f:
+                self.line_bot_api.upload_rich_menu_image(
+                    rich_menu_id=rich_menu_id,
+                    body=f.read(),
+                    _headers={'Content-Type': 'image/png'}
+                )
+            logger.info("Step 3 finished. Image uploaded.")
+
+            # Step 4: Set as Default
+            logger.info(f"Step 4: Setting menu {rich_menu_id} as default...")
+            self.line_bot_api.set_default_rich_menu(rich_menu_id)
+            logger.info("Step 4 finished. Menu set as default.")
+
+        except ApiException as e:
+            logger.error(f"LINE API Error during rich menu setup: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during rich menu setup: {e}", exc_info=True)
 
     def _register_routes(self):
         """註冊 Flask 路由"""
@@ -165,7 +224,6 @@ def create_app() -> Flask:
     """建立 Flask 應用程式實例 (供 Gunicorn 使用)"""
     logger.info("create_app() called by WSGI server.")
     bot_app = LineBotApp()
-    # 圖文選單設定已移至 build command 中獨立執行
     return bot_app.app
 
 
@@ -173,6 +231,7 @@ if __name__ == "__main__":
     try:
         logger.info("Running app.py directly. This is for local development.")
         bot_app = LineBotApp()
+        # 在本地開發時，圖文選單設定已移至 run.py
         port = bot_app.config.port
         debug_mode = bot_app.config.debug
         if debug_mode:
