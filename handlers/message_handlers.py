@@ -118,12 +118,26 @@ class MessageHandler:
             "Content-Type": "application/json"
         }
         
-        # Convert message objects to dictionaries
         message_dicts = []
         for msg in messages:
             if isinstance(msg, TextMessage):
                 message_dicts.append({"type": "text", "text": msg.text})
-            # Add other message types if needed
+            elif isinstance(msg, TemplateMessage):
+                template_json = {
+                    "type": "template",
+                    "altText": msg.alt_text,
+                    "template": {
+                        "type": msg.template.type,
+                        "columns": [
+                            {
+                                "title": col.title,
+                                "text": col.text,
+                                "actions": [{"type": "uri", "label": action.label, "uri": action.uri} for action in col.actions]
+                            } for col in msg.template.columns
+                        ]
+                    }
+                }
+                message_dicts.append(template_json)
             else:
                  logger.warning(f"Unsupported message type for push: {type(msg)}")
                  continue
@@ -480,6 +494,20 @@ class TextMessageHandler(MessageHandler):
             if not keyword:
                 self._reply_message(line_bot_api, reply_token, "請告訴我要尋找什麼喔！\n格式：`尋找附近的餐廳`")
                 return
+            
+            last_location = self.storage_service.get_user_last_location(user_id)
+            if last_location:
+                self._show_loading_animation(user_id)
+                def task(user_id, keyword, latitude, longitude):
+                    places = self.ai_service.search_location(query=keyword, is_nearby=True, latitude=latitude, longitude=longitude)
+                    if places and places.get("places"):
+                        carousel = self._create_location_carousel(places["places"])
+                        self._push_message_with_retry(user_id, messages=[carousel])
+                    else:
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text=f"抱歉，在您附近找不到「{keyword}」的相關地點。")])
+                threading.Thread(target=task, args=(user_id, keyword, last_location['latitude'], last_location['longitude'])).start()
+                return
+
             self.storage_service.set_nearby_query(user_id, keyword)
             self._reply_message(line_bot_api, reply_token, f"好的，請分享您的位置，我將為您尋找附近的「{keyword}」。")
         else:
@@ -664,9 +692,13 @@ class LocationMessageHandler(MessageHandler):
         latitude = event.message.latitude
         longitude = event.message.longitude
         logger.info(f"Received location from user {user_id}: Lat={latitude}, Lon={longitude}")
+        
+        # 將收到的位置資訊存起來
+        self.storage_service.set_user_last_location(user_id, latitude, longitude)
+        
         pending_query = self.storage_service.get_nearby_query(user_id)
         if not pending_query:
-            self._reply_message(line_bot_api, reply_token, "感謝您分享位置！如果您想搜尋附近的地點，可以先傳送「尋找附近的美食」喔！")
+            self._reply_message(line_bot_api, reply_token, "感謝您分享位置！我已經記住您的位置了，現在您可以直接傳送「尋找附近的美食」囉！")
             return
         self._show_loading_animation(user_id)
         def task(user_id, pending_query, latitude, longitude):
