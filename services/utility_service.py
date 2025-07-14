@@ -38,15 +38,10 @@ class UtilityService:
         self.conversion_pattern = re.compile(
             r'([\d\.]+)\s*(' + '|'.join(all_units) + r')\s*(?:=|轉|換|等於|到|成)\s*(' + '|'.join(all_units) + r')'
         )
-        # 匯率換算的正則表達式
-        self.currency_pattern = re.compile(
-            r'([\d\.]+)\s*([A-Z]{3})\s*(?:to|換|轉|等於|到|成)\s*([A-Z]{3})', re.IGNORECASE
-        )
 
     def _get_exchange_rates(self, base_currency: str) -> dict | None:
         """從 API 獲取匯率"""
         try:
-            # 更換為另一個免費匯率 API: open.er-api.com
             url = f"https://open.er-api.com/v6/latest/{base_currency.upper()}"
             response = requests.get(url, timeout=5)
             response.raise_for_status()
@@ -54,27 +49,14 @@ class UtilityService:
             if data.get("result") == "success":
                 return data.get('rates')
             else:
-                # 記錄完整的錯誤回應以供除錯
                 logger.error(f"Exchange rate API returned an error: {data}")
                 return None
         except requests.RequestException as e:
             logger.error(f"Failed to fetch exchange rates: {e}")
             return None
 
-    def _convert_currency(self, text: str) -> str | None:
-        """解析並換算匯率"""
-        match = self.currency_pattern.search(text)
-        if not match:
-            return None
-
-        try:
-            value_str, from_currency, to_currency = match.groups()
-            value = Decimal(value_str)
-            from_currency = from_currency.upper()
-            to_currency = to_currency.upper()
-        except InvalidOperation:
-            return "請輸入有效的數字。"
-
+    def _convert_currency(self, value: Decimal, from_currency: str, to_currency: str) -> str | None:
+        """執行匯率換算"""
         rates = self._get_exchange_rates(from_currency)
         if not rates:
             return "抱歉，無法獲取即時匯率，請稍後再試。"
@@ -84,19 +66,28 @@ class UtilityService:
 
         rate = Decimal(str(rates[to_currency]))
         converted_value = value * rate
-        return f"{value_str} {from_currency} 約等於 {converted_value:.4f} {to_currency}"
+        return f"{value} {from_currency} 約等於 {converted_value:.4f} {to_currency}"
 
-    def parse_and_convert(self, text: str) -> str | None:
+    def parse_and_convert(self, text: str, ai_service=None) -> str | None:
         """
-        解析文字並執行單位換算。
-        範例: "100cm等於幾m", "1.5kg轉g"
+        解析文字並執行單位換算或匯率換算。
         """
-        # 優先嘗試貨幣換算
-        currency_result = self._convert_currency(text)
-        if currency_result:
-            return currency_result
+        # 優先嘗試貨幣換算 (透過 AI 服務)
+        if ai_service:
+            currency_query = ai_service.parse_currency_conversion_query(text)
+            if currency_query and currency_query.get("value") and currency_query.get("from_currency") and currency_query.get("to_currency"):
+                try:
+                    value = Decimal(str(currency_query["value"]))
+                    from_currency = currency_query["from_currency"]
+                    to_currency = currency_query["to_currency"]
+                    return self._convert_currency(value, from_currency, to_currency)
+                except InvalidOperation:
+                    return "請輸入有效的數字。"
+                except Exception as e:
+                    logger.error(f"Error during AI-assisted currency conversion: {e}")
+                    return "抱歉，匯率換算時發生錯誤。"
 
-        # 如果不是貨幣換算，再嘗試單位換算
+        # 如果不是貨幣換算，再嘗試單位換算 (透過正則表達式)
         match = self.conversion_pattern.search(text.lower())
         if not match:
             return None
@@ -107,11 +98,9 @@ class UtilityService:
         except InvalidOperation:
             return "請輸入有效的數字。"
         
-        # 判斷單位類型
         if from_unit in self.length_units and to_unit in self.length_units:
             base_value = value * self.length_units[from_unit]
             converted_value = base_value / self.length_units[to_unit]
-            # 將結果格式化，移除多餘的零
             return f"{value_str} {from_unit} 等於 {converted_value.normalize():f} {to_unit}"
         
         elif from_unit in self.weight_units and to_unit in self.weight_units:

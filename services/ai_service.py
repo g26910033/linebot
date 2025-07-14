@@ -345,3 +345,50 @@ class AIService:
         except Exception as e:
             logger.error(f"Error parsing weather query from text: {e}", exc_info=True)
             return None
+
+    def parse_currency_conversion_query(self, text: str) -> dict | None:
+        """
+        從自然語言中解析出貨幣換算的數值、來源貨幣和目標貨幣。
+        """
+        if not self.is_available():
+            return None
+
+        prompt = f"""
+        你是一個貨幣換算專家。請從使用者的句子中，解析出「數值」、「來源貨幣」和「目標貨幣」。
+
+        解析規則：
+        -   **數值 (value)**: 要換算的金額。
+        -   **來源貨幣 (from_currency)**: 原始貨幣的口語化名稱或代碼。
+        -   **目標貨幣 (to_currency)**: 目標貨幣的口語化名稱或代碼。
+        -   如果無法解析出所有必要資訊，請回傳 `{{ "value": null, "from_currency": null, "to_currency": null }}`。
+        -   你的回應必須是純粹的 JSON 格式，不包含任何其他文字或 markdown 符號。
+
+        常見貨幣名稱與其 ISO 代碼的對應（請優先使用 ISO 代碼）：
+        -   台幣: TWD
+        -   新台幣: TWD
+        -   美元: USD
+        -   美金: USD
+        -   日圓: JPY
+        -   日幣: JPY
+        -   歐元: EUR
+        -   英鎊: GBP
+        -   人民幣: CNY
+        -   韓元: KRW
+        -   港幣: HKD
+        -   加幣: CAD
+        -   澳幣: AUD
+
+        使用者輸入: "{text}"
+
+        JSON 輸出:
+        """
+        try:
+            response = self.text_vision_model.generate_content(prompt)
+            cleaned_response = self.clean_text(response.text)
+            data = json.loads(cleaned_response)
+            if data.get("value") and data.get("from_currency") and data.get("to_currency"):
+                return data
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing currency conversion query from text: {e}", exc_info=True)
+            return None
