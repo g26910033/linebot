@@ -60,8 +60,16 @@ class LineBotApp:
         self.weather_service = WeatherService(self.config.openweather_api_key)
         self.news_service = NewsService(self.config.news_api_key)
         self.calendar_service = CalendarService()
-        self.stock_service = StockService(self.config.finnhub_api_key)
-        logger.debug("AI, Storage, Web, Utility, Weather, News, Calendar, and Stock Services initialized.")
+        
+        # 只有在 API Key 存在時才初始化 StockService
+        if self.config.finnhub_api_key:
+            self.stock_service = StockService(self.config.finnhub_api_key)
+            logger.debug("Stock Service initialized.")
+        else:
+            self.stock_service = None
+            logger.warning("FINNHUB_API_KEY not set. Stock service is disabled.")
+            
+        logger.debug("AI, Storage, Web, Utility, Weather, News, and Calendar Services initialized.")
 
         # 初始化 LINE Bot API 客戶端
         self.configuration = Configuration(access_token=self.config.line_channel_access_token)

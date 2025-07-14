@@ -1,4 +1,4 @@
-﻿"""
+"""
 應用程式設定模組
 負責管理所有環境變數和配置，型別安全、動態驗證。
 """
@@ -59,8 +59,8 @@ class AppConfig:
     openweather_api_key: str
     # NewsAPI.org API Key
     news_api_key: str
-    # Finnhub API Key
-    finnhub_api_key: str
+    # Finnhub API Key (設為可選)
+    finnhub_api_key: Optional[str] = None
     # 有預設值的參數
     gcp_location: str = "us-central1"
     redis_url: Optional[str] = None
