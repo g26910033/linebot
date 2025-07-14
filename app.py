@@ -170,10 +170,9 @@ class LineBotApp:
 
             # --- Step 3: Upload Image ---
             logger.info(f"Step 3: Uploading image for menu ID: {rich_menu_id}")
-            # 使用 MessagingApiBlob 來處理二進位檔案上傳
-            api_blob = MessagingApiBlob(self.api_client)
+            # 在 SDK v3.9.0+ 中，上傳方法回到了 MessagingApi 物件
             with open(png_path, 'rb') as f:
-                api_blob.upload_rich_menu_image(
+                self.line_bot_api.upload_rich_menu_image(
                     rich_menu_id=rich_menu_id,
                     body=f.read(),
                     _headers={'Content-Type': 'image/png'}

@@ -104,9 +104,8 @@ class TextMessageHandler(BaseMessageHandler):
                 return
 
             try:
-                # 使用 MessagingApiBlob 來下載內容
-                api_blob = MessagingApiBlob(self.line_bot_api.api_client)
-                message_content = api_blob.get_message_content(
+                # 在新版 SDK 中，直接從主 API 物件下載內容
+                message_content = self.line_bot_api.get_message_content(
                     message_id=last_image_id)
                 image_data = message_content
                 analysis_result = self.image_service.analyze_image(image_data)
@@ -158,8 +157,7 @@ class TextMessageHandler(BaseMessageHandler):
         def task():
             try:
                 # 下載基底圖片
-                api_blob = MessagingApiBlob(self.line_bot_api.api_client)
-                base_image_bytes = api_blob.get_message_content(message_id=last_image_id)
+                base_image_bytes = self.line_bot_api.get_message_content(message_id=last_image_id)
 
                 # 生成新圖片
                 image_bytes, status_msg = self.image_service.generate_image_from_image(
