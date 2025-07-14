@@ -165,7 +165,7 @@ class AIIntentHandler:
 
             # 這裡未來可以串接真正的 Google Maps API
             # 目前先回覆一則確認訊息
-            reply_text = f"收到您的搜尋指令：「{user_message}」。\n我將在您分享的位置：(lat: {last_location['lat']}, lon: {last_location['lon']}) 附近尋找。"
+            reply_text = f"收到您的搜尋指令：「{user_message}」。\n我將在您分享的位置：(lat: {last_location['latitude']}, lon: {last_location['longitude']}) 附近尋找。"
             push_request = PushMessageRequest(
                 to=user_id,
                 messages=[TextMessage(text=reply_text)]

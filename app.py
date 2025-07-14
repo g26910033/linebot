@@ -137,25 +137,28 @@ class LineBotApp:
             json_path = os.path.join(base_dir, 'scripts', 'rich_menu.json')
             png_path = os.path.join(
                 base_dir, 'scripts', 'rich_menu_background.png')
-            logger.info(f"Current working directory: {os.getcwd()}")
-            logger.info(f"Attempting to load rich menu JSON from: {json_path}")
-            logger.info(f"Attempting to load rich menu PNG from: {png_path}")
+            logger.info(f"Attempting to set up rich menu '{rich_menu_name}'...")
+            logger.info(f"JSON path: {json_path}")
+            logger.info(f"PNG path: {png_path}")
 
-            # 1. 取得所有圖文選單並刪除同名的舊選單
-            logger.info("Fetching existing rich menus...")
-            rich_menu_list = self.line_bot_api.get_rich_menu_list()
-            logger.info(f"Found {len(rich_menu_list.richmenus)} existing menus.")
-            for menu in rich_menu_list.richmenus:
-                if menu.name == rich_menu_name:
-                    logger.info(f"Deleting old rich menu: {menu.rich_menu_id}")
-                    self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
+            # 1. 刪除所有同名的舊選單
+            try:
+                rich_menu_list = self.line_bot_api.get_rich_menu_list()
+                for menu in rich_menu_list.richmenus:
+                    if menu.name == rich_menu_name:
+                        logger.info(f"Deleting old rich menu: {menu.rich_menu_id}")
+                        self.line_bot_api.delete_rich_menu(menu.rich_menu_id)
+            except ApiException as e:
+                logger.warning(f"Could not fetch or delete rich menus: {e}. This might be normal if no menus exist.")
 
-            # 2. 建立圖文選單
+
+            # 2. 建立新的圖文選單
             logger.info(f"Creating new rich menu: '{rich_menu_name}'")
             with open(json_path, 'r', encoding='utf-8') as f:
                 rich_menu_json = json.load(f)
             rich_menu_json['name'] = rich_menu_name
             rich_menu_to_create = RichMenuRequest.from_dict(rich_menu_json)
+            
             rich_menu_id = self.line_bot_api.create_rich_menu(
                 rich_menu_request=rich_menu_to_create)
             logger.info(f"Rich menu created successfully. ID: {rich_menu_id}")

@@ -93,8 +93,34 @@ class TextMessageHandler(BaseMessageHandler):
         threading.Thread(target=task).start()
 
     def _handle_image_analysis(self, user_id: str, reply_token: str):
-        # ... (這部分邏輯也應該遷移，但暫時保留以求功能完整)
-        pass
+        """處理圖片分析指令。"""
+        def task():
+            last_image_id = self.storage_service.get_user_last_image_id(user_id)
+            if not last_image_id:
+                reply_text = "請您先上傳一張圖片，我才能為您分析喔！"
+                push_request = PushMessageRequest(
+                    to=user_id, messages=[TextMessage(text=reply_text)])
+                self.line_bot_api.push_message(push_request)
+                return
+
+            try:
+                message_content = self.line_bot_api.get_message_content(
+                    last_image_id)
+                image_data = message_content.read()
+                analysis_result = self.image_service.analyze_image(image_data)
+                push_request = PushMessageRequest(
+                    to=user_id, messages=[TextMessage(text=analysis_result)])
+                self.line_bot_api.push_message(push_request)
+            except Exception as e:
+                logger.error(
+                    f"Error during image analysis for user {user_id}: {e}",
+                    exc_info=True)
+                error_text = "抱歉，分析圖片時發生錯誤，請稍後再試。"
+                push_request = PushMessageRequest(
+                    to=user_id, messages=[TextMessage(text=error_text)])
+                self.line_bot_api.push_message(push_request)
+
+        threading.Thread(target=task).start()
 
     def _handle_image_to_image_init(self, user_id: str, reply_token: str):
         # ... (同上)
