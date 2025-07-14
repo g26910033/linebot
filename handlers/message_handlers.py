@@ -107,6 +107,48 @@ class MessageHandler:
             time.sleep(0.5)
         logger.error(f"Failed to send Flex Message to {reply_token} after 3 attempts.")
 
+    def _push_message_with_retry(self, user_id: str, messages: list) -> None:
+        if not self.line_channel_access_token:
+            logger.error("Cannot push message: LINE Channel Access Token not set.")
+            return
+
+        url = "https://api.line.me/v2/bot/message/push"
+        headers = {
+            "Authorization": f"Bearer {self.line_channel_access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Convert message objects to dictionaries
+        message_dicts = []
+        for msg in messages:
+            if isinstance(msg, TextMessage):
+                message_dicts.append({"type": "text", "text": msg.text})
+            # Add other message types if needed
+            else:
+                 logger.warning(f"Unsupported message type for push: {type(msg)}")
+                 continue
+
+        if not message_dicts:
+            return
+
+        data = {
+            "to": user_id,
+            "messages": message_dicts
+        }
+
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, data=json.dumps(data), timeout=10)
+                if response.status_code == 200:
+                    return
+                else:
+                    logger.warning(f"Push message attempt {attempt + 1} failed with status {response.status_code}. Retrying...")
+            except requests.RequestException as e:
+                logger.warning(f"Push message attempt {attempt + 1} failed with network error: {e}. Retrying...")
+            time.sleep(0.5)
+        logger.error(f"Failed to push message to {user_id} after 3 attempts.")
+
+
     def _create_location_carousel(self, places_list: list) -> TemplateMessage | TextMessage:
         columns = []
         for place in places_list[:10]:
@@ -134,7 +176,6 @@ class TextMessageHandler(MessageHandler):
             if self.utility_service:
                 conversion_result = self.utility_service.parse_and_convert(user_message, self.ai_service)
                 if conversion_result:
-                    logger.debug(f"User {user_id} triggered unit/currency conversion.")
                     self._reply_message(line_bot_api, reply_token, conversion_result)
                     return
 
@@ -149,12 +190,12 @@ class TextMessageHandler(MessageHandler):
                             forecast_result = self.weather_service.get_weather_forecast(city)
                             if isinstance(forecast_result, dict):
                                 carousel = self._create_weather_forecast_carousel(forecast_result)
-                                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
+                                self._push_message_with_retry(user_id, messages=[carousel])
                             else:
-                                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=forecast_result)]))
+                                self._push_message_with_retry(user_id, messages=[TextMessage(text=forecast_result)])
                         else:
                             current_weather = self.weather_service.get_current_weather(city)
-                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=current_weather)]))
+                            self._push_message_with_retry(user_id, messages=[TextMessage(text=current_weather)])
                     threading.Thread(target=weather_task, args=(user_id, city, query_type)).start()
                     return
 
@@ -162,7 +203,7 @@ class TextMessageHandler(MessageHandler):
                 self._show_loading_animation(user_id)
                 def news_task(user_id):
                     news_result = self.news_service.get_top_headlines()
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=news_result)]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=news_result)])
                 threading.Thread(target=news_task, args=(user_id,)).start()
                 return
 
@@ -172,7 +213,7 @@ class TextMessageHandler(MessageHandler):
                     self._show_loading_animation(user_id)
                     def stock_task(user_id, symbol):
                         stock_result = self.stock_service.get_stock_quote(symbol)
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=stock_result)]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text=stock_result)])
                     threading.Thread(target=stock_task, args=(user_id, symbol)).start()
                     return
 
@@ -180,7 +221,7 @@ class TextMessageHandler(MessageHandler):
                 self._show_loading_animation(user_id)
                 def translation_task(user_id, user_message):
                     translated_text = self.ai_service.translate_text(user_message)
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=translated_text)]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=translated_text)])
                 threading.Thread(target=translation_task, args=(user_id, user_message)).start()
                 return
 
@@ -189,17 +230,17 @@ class TextMessageHandler(MessageHandler):
                 def calendar_task(user_id, user_message):
                     event_data = self.ai_service.parse_event_from_text(user_message)
                     if not event_data or not event_data.get('title'):
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，我無法理解您的行程安排，可以說得更清楚一點嗎？")]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text="抱歉，我無法理解您的行程安排，可以說得更清楚一點嗎？")])
                         return
                     calendar_link = self.calendar_service.create_google_calendar_link(event_data)
                     if not calendar_link:
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，處理您的日曆請求時發生錯誤。")]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text="抱歉，處理您的日曆請求時發生錯誤。")])
                         return
                     reply_text = (f"好的，我為您準備好日曆連結了！\n\n"
                                   f"標題：{event_data.get('title')}\n"
                                   f"時間：{event_data.get('start_time')}\n\n"
                                   f"請點擊下方連結將它加入您的 Google 日曆：\n{calendar_link}")
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=reply_text)]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=reply_text)])
                 threading.Thread(target=calendar_task, args=(user_id, user_message)).start()
                 return
 
@@ -257,11 +298,11 @@ class TextMessageHandler(MessageHandler):
                         history = self.storage_service.get_chat_history(user_id)
                         ai_response, updated_history = self.ai_service.chat_with_history(user_message, history)
                         self.storage_service.save_chat_history(user_id, updated_history)
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=ai_response)]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text=ai_response)])
                     except Exception as e:
                         logger.error(f"Error in chat background task for user {user_id}: {e}", exc_info=True)
                         try:
-                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題，請稍後再試一次。")]))
+                            self._push_message_with_retry(user_id, messages=[TextMessage(text="哎呀，處理您的訊息時發生了一點問題，請稍後再試一次。")])
                         except Exception as push_e:
                             logger.error(f"Failed to push error message to user {user_id}: {push_e}", exc_info=True)
                 threading.Thread(target=chat_task, args=(user_id, user_message)).start()
@@ -298,9 +339,9 @@ class TextMessageHandler(MessageHandler):
                         updated_todo_list = self.storage_service.get_todo_list(user_id)
                         if updated_todo_list:
                             flex_message_dict = self._create_todo_list_flex_message(updated_todo_list)
-                            logger.info("Pushing updated todo list via raw API call would happen here.")
+                            self._push_message_with_retry(user_id, messages=[flex_message_dict])
                         else:
-                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="恭喜！所有待辦事項都已完成！")]))
+                            self._push_message_with_retry(user_id, messages=[TextMessage(text="恭喜！所有待辦事項都已完成！")])
                     else:
                         self._reply_error(line_bot_api, reply_token, "抱歉，找不到指定的待辦事項，可能已經被移除了。")
             else:
@@ -372,10 +413,10 @@ class TextMessageHandler(MessageHandler):
                 line_bot_api_blob = MessagingApiBlob(line_bot_api.api_client)
                 image_bytes = line_bot_api_blob.get_message_content(message_id=message_id)
                 analysis_result = self.ai_service.analyze_image(image_bytes)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=analysis_result)]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text=analysis_result)])
             except Exception as e:
                 logger.error(f"Error in image analysis task for user {user_id}: {e}", exc_info=True)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="分析圖片時發生錯誤了。")]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text="分析圖片時發生錯誤了。")])
         threading.Thread(target=task, args=(user_id,)).start()
 
     def _handle_image_to_image_init(self, user_id: str, reply_token: str, line_bot_api: MessagingApi):
@@ -400,14 +441,14 @@ class TextMessageHandler(MessageHandler):
                 if new_image_bytes:
                     image_url, upload_status = self.storage_service.upload_image_to_cloudinary(new_image_bytes)
                     if image_url:
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]))
+                        self._push_message_with_retry(user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)])
                     else:
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")])
                 else:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")])
             except Exception as e:
                 logger.error(f"Error in image-to-image task for user {user_id}: {e}", exc_info=True)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="以圖生圖時發生錯誤了。")]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text="以圖生圖時發生錯誤了。")])
         threading.Thread(target=task, args=(user_id, prompt)).start()
 
     def _handle_draw_command(self, prompt: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
@@ -416,17 +457,17 @@ class TextMessageHandler(MessageHandler):
             return
         self._show_loading_animation(user_id, seconds=30)
         def task(user_id, prompt):
-            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")]))
+            self._push_message_with_retry(user_id, messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")])
             translated_prompt = self.ai_service.translate_prompt_for_drawing(prompt)
             image_bytes, status_msg = self.ai_service.generate_image(translated_prompt)
             if image_bytes:
                 image_url, upload_status = self.storage_service.upload_image_to_cloudinary(image_bytes)
                 if image_url:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]))
+                    self._push_message_with_retry(user_id, messages=[ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)])
                 else:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=f"圖片上傳失敗: {upload_status}")])
             else:
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text=f"繪圖失敗: {status_msg}")])
         threading.Thread(target=task, args=(user_id, prompt)).start()
 
     def _handle_clear_history(self, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
@@ -452,12 +493,12 @@ class TextMessageHandler(MessageHandler):
                     places = self.ai_service.search_location(query)
                     if places and places.get("places"):
                         carousel = self._create_location_carousel(places["places"])
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
+                        self._push_message_with_retry(user_id, messages=[carousel])
                     else:
-                        line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，找不到關於「{query}」的地點資訊。")]))
+                        self._push_message_with_retry(user_id, messages=[TextMessage(text=f"抱歉，找不到關於「{query}」的地點資訊。")])
                 except Exception as e:
                     logger.error(f"Error in non-nearby search background task for user {user_id}: {e}", exc_info=True)
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋地點時發生錯誤了，請稍後再試。")]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text="哎呀，搜尋地點時發生錯誤了，請稍後再試。")])
             threading.Thread(target=task, args=(user_id, query)).start()
 
     def _handle_url_message(self, user_message: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
@@ -476,14 +517,14 @@ class TextMessageHandler(MessageHandler):
             try:
                 content = self.web_service.fetch_url_content(url)
                 if not content:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="抱歉，無法讀取您提供的網址內容。")]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text="抱歉，無法讀取您提供的網址內容。")])
                     return
                 
                 summary = self.ai_service.summarize_text(content)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=summary)]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text=summary)])
             except Exception as e:
                 logger.error(f"Error in URL message handling task for user {user_id}: {e}", exc_info=True)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，摘要網頁/影片內容時發生錯誤了，請稍後再試。")]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text="哎呀，摘要網頁/影片內容時發生錯誤了，請稍後再試。")])
         threading.Thread(target=task, args=(user_id, url)).start()
 
     def _handle_add_todo(self, item: str, user_id: str, reply_token: str, line_bot_api: MessagingApi) -> None:
@@ -633,10 +674,10 @@ class LocationMessageHandler(MessageHandler):
                 places = self.ai_service.search_location(query=pending_query, is_nearby=True, latitude=latitude, longitude=longitude)
                 if places and places.get("places"):
                     carousel = self._create_location_carousel(places["places"])
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
+                    self._push_message_with_retry(user_id, messages=[carousel])
                 else:
-                    line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=f"抱歉，在您附近找不到「{pending_query}」的相關地點。")]))
+                    self._push_message_with_retry(user_id, messages=[TextMessage(text=f"抱歉，在您附近找不到「{pending_query}」的相關地點。")])
             except Exception as e:
                 logger.error(f"Error in location search background task for user {user_id}: {e}", exc_info=True)
-                line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="哎呀，搜尋附近地點時發生錯誤了，請稍後再試。")]))
+                self._push_message_with_retry(user_id, messages=[TextMessage(text="哎呀，搜尋附近地點時發生錯誤了，請稍後再試。")])
         threading.Thread(target=task, args=(user_id, pending_query, latitude, longitude)).start()
