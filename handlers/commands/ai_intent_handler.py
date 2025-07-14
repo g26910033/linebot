@@ -173,15 +173,84 @@ class AIIntentHandler:
                 self.line_bot_api.push_message(push_request)
                 return
 
-            # TODO: 這裡未來可以串接真正的 Google Maps API
-            # 目前先回覆一則確認訊息
-            reply_text = f"收到您的搜尋指令：「{query}」。\n我將在您分享的位置：(lat: {last_location['latitude']}, lon: {last_location['longitude']}) 附近尋找。"
-            push_request = PushMessageRequest(
-                to=user_id,
-                messages=[TextMessage(text=reply_text)]
+            # 呼叫 parsing_service 來搜尋地點
+            search_results = self.parsing_service.search_location(
+                query=query,
+                is_nearby=True,
+                latitude=last_location['latitude'],
+                longitude=last_location['longitude']
             )
+
+            if not search_results or not search_results.get('places'):
+                reply_text = f"抱歉，在您附近找不到關於「{query}」的地點。"
+                message = TextMessage(text=reply_text)
+            else:
+                carousel = self._create_location_carousel(search_results['places'])
+                message = FlexMessage(alt_text=f"為您找到附近的「{query}」", contents=carousel)
+
+            push_request = PushMessageRequest(to=user_id, messages=[message])
             self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
+
+    def _create_location_carousel(self, places: list) -> FlexContainer:
+        """建立地點搜尋結果的 Flex Message 轉盤。"""
+        bubbles = []
+        for place in places:
+            display_name = place.get('displayName', {}).get('text', '無名稱')
+            address = place.get('formattedAddress', '無地址')
+            # 建立 Google Maps 連結
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={display_name.replace(' ', '+')}+{address.replace(' ', '+')}"
+
+            bubble = {
+                "type": "bubble",
+                "header": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {"type": "text", "text": "📍 地點資訊", "color": "#ffffff", "weight": "bold"}
+                    ],
+                    "backgroundColor": "#007BFF"
+                },
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": display_name,
+                            "weight": "bold",
+                            "size": "xl",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": address,
+                            "wrap": True,
+                            "size": "sm",
+                            "color": "#666666"
+                        }
+                    ]
+                },
+                "footer": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "button",
+                            "action": {
+                                "type": "uri",
+                                "label": "在 Google Maps 上查看",
+                                "uri": maps_url
+                            },
+                            "style": "primary",
+                            "height": "sm"
+                        }
+                    ]
+                }
+            }
+            bubbles.append(FlexContainer.from_dict(bubble))
+        return FlexContainer(type="carousel", contents=bubbles)
 
     def _create_weather_forecast_carousel(self, data: dict) -> FlexContainer:
         """建立天氣預報的 Flex Message 轉盤。"""

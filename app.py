@@ -12,7 +12,8 @@ from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, RichMenuRequest, ApiException)
+    Configuration, ApiClient, MessagingApi, MessagingApiBlob, RichMenuRequest,
+    ApiException)
 from linebot.v3.webhooks import (
     MessageEvent, TextMessageContent, ImageMessageContent,
     LocationMessageContent, PostbackEvent)
@@ -162,9 +163,11 @@ class LineBotApp:
 
             # 3. 上傳圖片
             logger.info(f"Uploading image for rich menu ID: {rich_menu_id}")
+            api_blob = MessagingApiBlob(self.api_client)
             with open(png_path, 'rb') as f:
-                self.line_bot_api.upload_rich_menu_image(
-                    rich_menu_id, f.read(), 'image/png')
+                api_blob.upload_rich_menu_image(
+                    rich_menu_id=rich_menu_id, body=f.read(),
+                    _headers={'Content-Type': 'image/png'})
             logger.info("Rich menu image uploaded successfully.")
 
             # 4. 設為預設

@@ -38,12 +38,12 @@ class DrawCommandHandler:
             self.line_bot_api.reply_message(reply_request)
             return
 
-        # 這裡我們不能直接回覆，因為原始邏輯是異步的
-        # 我們將啟動一個線程來處理，並立即返回
-        # loading animation 和 push message 需要 access token，這需要在初始化時傳入
-
-        # 顯示加載動畫 (這部分邏輯需要從 MessageHandler 提取或重構)
-        # self._show_loading_animation(user_id, seconds=30)
+        # 先快速回覆，避免 token 過期
+        initial_reply = ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=f"好的，正在為您繪製「{prompt}」，請稍候...")]
+        )
+        self.line_bot_api.reply_message(initial_reply)
 
         def task(user_id, prompt):
             try:
