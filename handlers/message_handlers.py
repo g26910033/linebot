@@ -13,7 +13,7 @@ from linebot.v3.messaging import (
     TextMessage, ImageMessage, TemplateMessage,
     CarouselTemplate, CarouselColumn, URIAction,
     QuickReply, QuickReplyItem, MessageAction as QuickReplyMessageAction,
-    FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, ButtonComponent, SeparatorComponent, PostbackAction
+    SendMessage
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, LocationMessageContent, PostbackEvent
 from services.ai_service import AIService
@@ -275,8 +275,8 @@ class TextMessageHandler(MessageHandler):
                         self._reply_message(line_bot_api, reply_token, f"太棒了！已完成項目：「{removed_item}」")
                         updated_todo_list = self.storage_service.get_todo_list(user_id)
                         if updated_todo_list:
-                            flex_message = self._create_todo_list_flex_message(updated_todo_list)
-                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[flex_message]))
+                            flex_message_dict = self._create_todo_list_flex_message(updated_todo_list)
+                            line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[SendMessage(type="flex", alt_text="您的待辦清單", contents=flex_message_dict)]))
                         else:
                             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="恭喜！所有待辦事項都已完成！")]))
                     else:
@@ -478,9 +478,11 @@ class TextMessageHandler(MessageHandler):
         if not todo_list:
             self._reply_message(line_bot_api, reply_token, "您的待辦清單是空的！")
         else:
-            flex_message = self._create_todo_list_flex_message(todo_list)
+            flex_message_dict = self._create_todo_list_flex_message(todo_list)
             try:
-                line_bot_api.reply_message_with_http_info(ReplyMessageRequest(reply_token=reply_token, messages=[flex_message]))
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(reply_token=reply_token, messages=[SendMessage(type="flex", alt_text="您的待辦清單", contents=flex_message_dict)])
+                )
             except Exception as e:
                 logger.error(f"Failed to send Flex Message: {e}", exc_info=True)
                 self._reply_error(line_bot_api, reply_token, "抱歉，顯示待辦清單時發生錯誤。")
@@ -495,21 +497,70 @@ class TextMessageHandler(MessageHandler):
         else:
             self._reply_error(line_bot_api, reply_token, "找不到您指定的待辦事項，請檢查編號是否正確。")
 
-    def _create_todo_list_flex_message(self, todo_list: list) -> FlexSendMessage:
-        header = BoxComponent(layout='vertical', contents=[TextComponent(text='📝 您的待辦清單', weight='bold', size='xl', color='#1DB446')])
+    def _create_todo_list_flex_message(self, todo_list: list) -> dict:
         body_contents = []
         for i, item in enumerate(todo_list[:10]):
-            body_contents.append(BoxComponent(layout='horizontal', spacing='md', contents=[
-                TextComponent(text=f"{i+1}. {item}", wrap=True, flex=4),
-                ButtonComponent(action=PostbackAction(label='完成', data=f'action=complete_todo&index={i}', display_text=f'完成待辦 {i+1}'), style='primary', color='#1DB446', height='sm', flex=1)
-            ]))
+            body_contents.append({
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "md",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"{i+1}. {item}",
+                        "wrap": True,
+                        "flex": 4
+                    },
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "postback",
+                            "label": "完成",
+                            "data": f"action=complete_todo&index={i}",
+                            "displayText": f"完成待辦 {i+1}"
+                        },
+                        "style": "primary",
+                        "color": "#1DB446",
+                        "height": "sm",
+                        "flex": 1
+                    }
+                ]
+            })
             if i < len(todo_list[:10]) - 1:
-                body_contents.append(SeparatorComponent(margin='md'))
+                body_contents.append({"type": "separator", "margin": "md"})
+
         if len(todo_list) > 10:
-            body_contents.append(SeparatorComponent(margin='md'))
-            body_contents.append(TextComponent(text=f"...還有 {len(todo_list) - 10} 個項目未顯示。", size='sm', color='#999999', wrap=True))
-        bubble = BubbleContainer(header=header, body=BoxComponent(layout='vertical', spacing='md', contents=body_contents))
-        return FlexSendMessage(alt_text="您的待辦清單", contents=bubble)
+            body_contents.append({"type": "separator", "margin": "md"})
+            body_contents.append({
+                "type": "text",
+                "text": f"...還有 {len(todo_list) - 10} 個項目未顯示。",
+                "size": "sm",
+                "color": "#999999",
+                "wrap": True
+            })
+        
+        return {
+            "type": "bubble",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "📝 您的待辦清單",
+                        "weight": "bold",
+                        "size": "xl",
+                        "color": "#1DB446"
+                    }
+                ]
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": body_contents
+            }
+        }
 
     def _create_weather_forecast_carousel(self, forecast_data: dict) -> TemplateMessage:
         city_name = forecast_data.get("city", "未知城市")
