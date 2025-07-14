@@ -1,17 +1,24 @@
-Flask==3.0.3
-gunicorn==22.0.0
+# 安全版本 - 經過測試的相容組合
 line-bot-sdk==3.12.0
-requests==2.31.0
-beautifulsoup4==4.12.3
-redis==5.0.1
+flask==3.0.0
+google-cloud-aiplatform==1.42.1
 cloudinary==1.40.0
-google-cloud-aiplatform==1.58.0
-google-auth==2.29.0
-google-cloud-storage==2.11.0
-python-dateutil==2.9.0.post0
-pytz==2024.1
-waitress==3.0.0
-youtube-transcript-api==0.6.2
 Pillow==10.4.0
-python-dotenv==1.0.1
-psutil==5.9.8
+redis==5.0.1
+gunicorn==21.2.0
+
+# 讓 pip 自動解析相容版本
+requests>=2.32.3
+urllib3>=2.0.0
+certifi>=2023.0.0
+
+# 移除其他可能造成衝突的固定版本，讓 pip 自行處理
+beautifulsoup4
+python-dateutil
+pytz
+waitress
+youtube-transcript-api
+python-dotenv
+psutil
+google-auth
+google-cloud-storage
