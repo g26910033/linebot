@@ -122,6 +122,12 @@ class MessageHandler:
         for msg in messages:
             if isinstance(msg, TextMessage):
                 message_dicts.append({"type": "text", "text": msg.text})
+            elif isinstance(msg, ImageMessage):
+                message_dicts.append({
+                    "type": "image",
+                    "originalContentUrl": msg.original_content_url,
+                    "previewImageUrl": msg.preview_image_url
+                })
             elif isinstance(msg, TemplateMessage):
                 template_json = {
                     "type": "template",
@@ -138,6 +144,12 @@ class MessageHandler:
                     }
                 }
                 message_dicts.append(template_json)
+            elif isinstance(msg, dict) and msg.get("type") == "bubble": # Handle Flex Message dict
+                 message_dicts.append({
+                    "type": "flex",
+                    "altText": "待辦事項清單", # Default alt text
+                    "contents": msg
+                })
             else:
                  logger.warning(f"Unsupported message type for push: {type(msg)}")
                  continue
