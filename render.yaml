@@ -16,8 +16,6 @@ services:
         --max-requests 2000 \
         --max-requests-jitter 200
     envVars:
-      - key: PYTHON_VERSION
-        value: '3.11'
       - key: PYTHONUNBUFFERED
         value: 1
       - key: PYTHONDONTWRITEBYTECODE

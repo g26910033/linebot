@@ -6,8 +6,11 @@ import threading
 import re
 import requests
 import json
+import time
 from urllib.parse import quote_plus
 from datetime import datetime
+from urllib3.exceptions import ProtocolError
+
 from linebot.v3.messaging import (
     MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest,
@@ -49,9 +52,7 @@ class MessageHandler:
         headers = {"Authorization": f"Bearer {self.line_channel_access_token}", "Content-Type": "application/json"}
         data = {"chatId": user_id, "loadingSeconds": seconds}
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=5)
-            if response.status_code != 202:
-                logger.error(f"Failed to show loading animation. Status: {response.status_code}, Body: {response.text}")
+            requests.post(url, headers=headers, json=data, timeout=5)
         except requests.RequestException as e:
             logger.error(f"Exception when showing loading animation: {e}")
 
@@ -60,14 +61,19 @@ class MessageHandler:
         self._reply_message(line_bot_api, reply_token, error_message)
 
     def _reply_message(self, line_bot_api: MessagingApi, reply_token: str, message: str) -> None:
-        try:
-            api_response = line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=message)])
-            )
-            if api_response.status_code != 200:
-                logger.error(f"Error sending reply message. Status: {api_response.status_code}, Body: {api_response.data}")
-        except Exception as e:
-            logger.error(f"Exception when sending reply message: {e}", exc_info=True)
+        for attempt in range(3):
+            try:
+                api_response = line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=message)])
+                )
+                if api_response.status_code == 200:
+                    return
+                else:
+                    logger.warning(f"Reply attempt {attempt + 1} failed with status {api_response.status_code}. Retrying...")
+            except (requests.RequestException, ProtocolError) as e:
+                logger.warning(f"Reply attempt {attempt + 1} failed with network error: {e}. Retrying...")
+            time.sleep(0.5)
+        logger.error(f"Failed to send reply message to {reply_token} after 3 attempts.")
 
     def _reply_flex_message(self, reply_token: str, flex_message_dict: dict, alt_text: str) -> None:
         if not self.line_channel_access_token:
@@ -79,22 +85,27 @@ class MessageHandler:
             "Authorization": f"Bearer {self.line_channel_access_token}",
             "Content-Type": "application/json"
         }
-        message = {
+        message_data = {
             "type": "flex",
             "altText": alt_text,
             "contents": flex_message_dict
         }
         data = {
             "replyToken": reply_token,
-            "messages": [message]
+            "messages": [message_data]
         }
         
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(data))
-            if response.status_code != 200:
-                logger.error(f"Failed to send Flex Message. Status: {response.status_code}, Body: {response.text}")
-        except requests.RequestException as e:
-            logger.error(f"Exception when sending Flex Message: {e}", exc_info=True)
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, data=json.dumps(data), timeout=10)
+                if response.status_code == 200:
+                    return
+                else:
+                    logger.warning(f"Flex reply attempt {attempt + 1} failed with status {response.status_code}. Retrying...")
+            except requests.RequestException as e:
+                logger.warning(f"Flex reply attempt {attempt + 1} failed with network error: {e}. Retrying...")
+            time.sleep(0.5)
+        logger.error(f"Failed to send Flex Message to {reply_token} after 3 attempts.")
 
     def _create_location_carousel(self, places_list: list) -> TemplateMessage | TextMessage:
         columns = []
@@ -111,7 +122,6 @@ class MessageHandler:
         return TemplateMessage(alt_text='地點搜尋結果', template=CarouselTemplate(columns=columns)) if columns else TextMessage(text="抱歉，無法生成地點資訊卡片。")
 
 class TextMessageHandler(MessageHandler):
-    """文字訊息處理器"""
     _URL_PATTERN = re.compile(r'https?://\S+')
 
     def handle(self, event: MessageEvent, line_bot_api: MessagingApi) -> None:
@@ -121,7 +131,6 @@ class TextMessageHandler(MessageHandler):
         logger.info(f"Received text message from user {user_id}: '{user_message}'")
 
         try:
-            # 檢查是否為單位/匯率換算指令
             if self.utility_service:
                 conversion_result = self.utility_service.parse_and_convert(user_message, self.ai_service)
                 if conversion_result:
@@ -129,35 +138,27 @@ class TextMessageHandler(MessageHandler):
                     self._reply_message(line_bot_api, reply_token, conversion_result)
                     return
 
-            # 檢查是否為天氣查詢指令
             if self.weather_service:
                 weather_query = self.ai_service.parse_weather_query_from_text(user_message)
                 if weather_query and weather_query.get("city"):
                     city = weather_query["city"]
                     query_type = weather_query.get("type", "current")
-                    
                     self._show_loading_animation(user_id)
-
                     def weather_task(user_id, city, query_type):
                         if query_type == "forecast":
-                            logger.debug(f"User {user_id} triggered weather forecast for city: {city}")
                             forecast_result = self.weather_service.get_weather_forecast(city)
                             if isinstance(forecast_result, dict):
                                 carousel = self._create_weather_forecast_carousel(forecast_result)
                                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[carousel]))
                             else:
                                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=forecast_result)]))
-                        else: # current
-                            logger.debug(f"User {user_id} triggered current weather for city: {city}")
+                        else:
                             current_weather = self.weather_service.get_current_weather(city)
                             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text=current_weather)]))
-                    
                     threading.Thread(target=weather_task, args=(user_id, city, query_type)).start()
                     return
 
-            # 檢查是否為新聞查詢指令
             if self.news_service and self._is_news_command(user_message):
-                logger.debug(f"User {user_id} triggered news command.")
                 self._show_loading_animation(user_id)
                 def news_task(user_id):
                     news_result = self.news_service.get_top_headlines()
@@ -165,11 +166,9 @@ class TextMessageHandler(MessageHandler):
                 threading.Thread(target=news_task, args=(user_id,)).start()
                 return
 
-            # 檢查是否為股市查詢指令
             if self.stock_service:
                 symbol = self.ai_service.parse_stock_symbol_from_text(user_message)
                 if symbol:
-                    logger.debug(f"User {user_id} triggered stock command for symbol: {symbol} (parsed by AI)")
                     self._show_loading_animation(user_id)
                     def stock_task(user_id, symbol):
                         stock_result = self.stock_service.get_stock_quote(symbol)
@@ -177,9 +176,7 @@ class TextMessageHandler(MessageHandler):
                     threading.Thread(target=stock_task, args=(user_id, symbol)).start()
                     return
 
-            # 檢查是否為翻譯指令
             if self._is_translation_command(user_message):
-                logger.debug(f"User {user_id} triggered translation command.")
                 self._show_loading_animation(user_id)
                 def translation_task(user_id, user_message):
                     translated_text = self.ai_service.translate_text(user_message)
@@ -187,9 +184,7 @@ class TextMessageHandler(MessageHandler):
                 threading.Thread(target=translation_task, args=(user_id, user_message)).start()
                 return
 
-            # 檢查是否為日曆指令
             if self.calendar_service and self._is_calendar_command(user_message):
-                logger.debug(f"User {user_id} triggered calendar command.")
                 self._show_loading_animation(user_id)
                 def calendar_task(user_id, user_message):
                     event_data = self.ai_service.parse_event_from_text(user_message)
@@ -208,13 +203,10 @@ class TextMessageHandler(MessageHandler):
                 threading.Thread(target=calendar_task, args=(user_id, user_message)).start()
                 return
 
-            # 檢查是否為功能說明指令
             if self._is_help_command(user_message):
-                logger.debug(f"User {user_id} triggered help command.")
                 self._handle_help(reply_token, line_bot_api)
                 return
 
-            # 新增：處理圖文選單的複合按鈕
             if user_message == "天氣/新聞":
                 quick_reply = QuickReply(items=[
                     QuickReplyItem(action=QuickReplyMessageAction(label="🌦️ 看天氣", text="今天天氣如何")),
@@ -227,7 +219,6 @@ class TextMessageHandler(MessageHandler):
                 self._reply_message(line_bot_api, reply_token, "請先上傳一張圖片，然後點選「圖片分析」或「以圖生圖」按鈕喔！")
                 return
 
-            # 檢查內部圖片處理指令
             if user_message == "[指令]圖片分析":
                 self._handle_image_analysis(user_id, reply_token, line_bot_api)
                 return
@@ -236,39 +227,30 @@ class TextMessageHandler(MessageHandler):
                 self._handle_image_to_image_init(user_id, reply_token, line_bot_api)
                 return
 
-            # 檢查使用者是否處於等待輸入圖生圖提示的狀態
             user_state = self.storage_service.get_user_state(user_id)
             if user_state == "waiting_image_prompt":
                 self._handle_image_to_image_prompt(user_id, user_message, reply_token, line_bot_api)
                 return
 
             if self._is_draw_command(user_message):
-                logger.debug(f"User {user_id} triggered draw command.")
                 prompt = user_message.replace("畫", "", 1).strip()
                 self._handle_draw_command(prompt, user_id, reply_token, line_bot_api)
             elif self._is_clear_history_command(user_message):
-                logger.debug(f"User {user_id} triggered clear history command.")
                 self._handle_clear_history(user_id, reply_token, line_bot_api)
             elif self._is_search_command(user_message):
-                logger.debug(f"User {user_id} triggered search command.")
                 self._handle_search_command(user_message, user_id, reply_token, line_bot_api)
             elif self._is_add_todo_command(user_message):
-                logger.debug(f"User {user_id} triggered add todo command.")
                 item = re.sub(r'^(新增待辦|todo)', '', user_message, flags=re.IGNORECASE).strip()
                 self._handle_add_todo(item, user_id, reply_token, line_bot_api)
             elif self._is_list_todo_command(user_message):
-                logger.debug(f"User {user_id} triggered list todo command.")
                 self._handle_list_todos(user_id, reply_token, line_bot_api)
             elif self._is_complete_todo_command(user_message):
-                logger.debug(f"User {user_id} triggered complete todo command.")
                 match = re.search(r'\d+', user_message)
                 item_index = int(match.group(0)) - 1 if match else -1
                 self._handle_complete_todo(item_index, user_id, reply_token, line_bot_api)
             elif self._is_url_message(user_message):
-                logger.debug(f"User {user_id} sent a URL.")
                 self._handle_url_message(user_message, user_id, reply_token, line_bot_api)
             else:
-                logger.debug(f"User {user_id} triggered general chat.")
                 self._show_loading_animation(user_id)
                 def chat_task(user_id, user_message):
                     try:
@@ -316,8 +298,6 @@ class TextMessageHandler(MessageHandler):
                         updated_todo_list = self.storage_service.get_todo_list(user_id)
                         if updated_todo_list:
                             flex_message_dict = self._create_todo_list_flex_message(updated_todo_list)
-                            # This part needs to be updated to use a raw push, not SDK
-                            # For now, let's just log it. A full implementation would use requests.
                             logger.info("Pushing updated todo list via raw API call would happen here.")
                         else:
                             line_bot_api.push_message(PushMessageRequest(to=user_id, messages=[TextMessage(text="恭喜！所有待辦事項都已完成！")]))
