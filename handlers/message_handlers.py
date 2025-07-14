@@ -143,5 +143,27 @@ class LocationMessageHandler(BaseMessageHandler):
         super().__init__(line_bot_api, storage_service)
 
     def handle(self, event: MessageEvent):
-        # ... (地點處理邏輯也應遷移到 router/handler)
-        pass
+        """處理位置訊息，儲存經緯度並回覆。"""
+        user_id = event.source.user_id
+        reply_token = event.reply_token
+        latitude = event.message.latitude
+        longitude = event.message.longitude
+
+        logger.info(
+            f"Received location from {user_id}: "
+            f"lat={latitude}, lon={longitude}")
+
+        # 儲存使用者最後分享的位置
+        self.storage_service.set_user_last_location(
+            user_id, {"lat": latitude, "lon": longitude})
+
+        # 回覆確認訊息
+        reply_text = (
+            "收到您的位置了！現在您可以問我「附近有什麼好吃的？」"
+            "或「幫我找最近的咖啡廳」囉！"
+        )
+        reply_request = ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=reply_text)]
+        )
+        self.line_bot_api.reply_message(reply_request)

@@ -102,7 +102,7 @@ class LineBotApp:
             "core": core_service,
             "parsing": AIParsingService(self.config, core_service),
             "image": AIImageService(self.config, core_service),
-            "text": AITextService(core_service),
+            "text": AITextService(self.config, core_service),
             "storage": StorageService(self.config),
             "web": WebService(),
             "weather": WeatherService(self.config.openweather_api_key),

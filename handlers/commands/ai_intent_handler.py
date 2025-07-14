@@ -2,8 +2,10 @@
 AI 意圖處理器
 """
 import threading
-from linebot.v3.messaging import MessagingApi, TextMessage
+from linebot.v3.messaging import (
+    MessagingApi, TextMessage, PushMessageRequest)
 from services.ai.parsing_service import AIParsingService
+from services.storage_service import StorageService
 from services.weather_service import WeatherService
 from services.news_service import NewsService
 from services.stock_service import StockService
@@ -21,6 +23,7 @@ class AIIntentHandler:
             self,
             parsing_service: AIParsingService,
             text_service: AITextService,
+            storage_service: StorageService,
             weather_service: WeatherService,
             news_service: NewsService,
             stock_service: StockService,
@@ -28,6 +31,7 @@ class AIIntentHandler:
             line_bot_api: MessagingApi):
         self.parsing_service = parsing_service
         self.text_service = text_service
+        self.storage_service = storage_service
         self.weather_service = weather_service
         self.news_service = news_service
         self.stock_service = stock_service
@@ -67,6 +71,11 @@ class AIIntentHandler:
             self._handle_translation(user_id, user_message)
             return True
 
+        # 地點搜尋 (新增的邏輯)
+        if any(keyword in user_message.lower() for keyword in ["附近", "找", "搜尋"]):
+            self._handle_nearby_search(user_id, user_message)
+            return True
+
         return False  # 未匹配到任何 AI 意圖
 
     def _handle_weather(self, user_id, weather_query):
@@ -81,25 +90,29 @@ class AIIntentHandler:
             else:
                 result = self.weather_service.get_current_weather(city)
                 message = TextMessage(text=result)
-            self.line_bot_api.push_message(to=user_id, messages=[message])
+            push_request = PushMessageRequest(to=user_id, messages=[message])
+            self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
     def _handle_stock(self, user_id, symbol):
         def task():
             result = self.stock_service.get_stock_quote(symbol)
-            self.line_bot_api.push_message(
-                to=user_id, messages=[
-                    TextMessage(
-                        text=result)])
+            push_request = PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=result)]
+            )
+            self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
     def _handle_news(self, user_id):
         def task():
-            result = self.news_service.get_top_headlines()
-            self.line_bot_api.push_message(
-                to=user_id, messages=[
-                    TextMessage(
-                        text=result)])
+            # news_service.get_top_headlines() 已經回傳格式化好的字串
+            formatted_news = self.news_service.get_top_headlines()
+            push_request = PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=formatted_news)]
+            )
+            self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
     def _handle_calendar(self, user_id, user_message):
@@ -120,16 +133,42 @@ class AIIntentHandler:
                         f"時間：{event_data.get('start_time')}\n\n"
                         "請點擊下方連結將它加入您的 Google 日曆：\n"
                         f"{calendar_link}")
-            self.line_bot_api.push_message(
-                to=user_id, messages=[
-                    TextMessage(text=reply_text)])
+            push_request = PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=reply_text)]
+            )
+            self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()
 
     def _handle_translation(self, user_id, user_message):
         def task():
             translated_text = self.text_service.translate_text(user_message)
-            self.line_bot_api.push_message(
+            push_request = PushMessageRequest(
                 to=user_id,
                 messages=[TextMessage(text=translated_text)]
             )
+            self.line_bot_api.push_message(push_request)
+        threading.Thread(target=task).start()
+
+    def _handle_nearby_search(self, user_id, user_message):
+        """處理附近地點搜尋的意圖。"""
+        def task():
+            last_location = self.storage_service.get_user_last_location(user_id)
+            if not last_location:
+                reply_text = "請先分享您的位置，我才能幫您尋找附近的地點喔！"
+                push_request = PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text=reply_text)]
+                )
+                self.line_bot_api.push_message(push_request)
+                return
+
+            # 這裡未來可以串接真正的 Google Maps API
+            # 目前先回覆一則確認訊息
+            reply_text = f"收到您的搜尋指令：「{user_message}」。\n我將在您分享的位置：(lat: {last_location['lat']}, lon: {last_location['lon']}) 附近尋找。"
+            push_request = PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=reply_text)]
+            )
+            self.line_bot_api.push_message(push_request)
         threading.Thread(target=task).start()

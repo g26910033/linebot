@@ -2,6 +2,7 @@
 AI 文字處理服務模組
 負責處理純文字的 AI 任務，如摘要、翻譯等。
 """
+from config.settings import AppConfig
 from utils.logger import get_logger
 from .core import AICoreService
 
@@ -13,7 +14,8 @@ class AITextService:
     AI 文字處理服務類別，封裝與純文字相關的 AI 互動。
     """
 
-    def __init__(self, core_service: AICoreService):
+    def __init__(self, config: AppConfig, core_service: AICoreService):
+        self.config = config
         self.core_service = core_service
 
     def _generate_content(self, prompt: str) -> str:

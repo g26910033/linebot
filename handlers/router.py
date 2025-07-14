@@ -34,6 +34,7 @@ class Router:
         self.ai_intent_handler = AIIntentHandler(
             services['parsing'],
             services['text'],
+            services['storage'],
             services['weather'],
             services['news'],
             services['stock'],
