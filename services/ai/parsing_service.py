@@ -7,6 +7,7 @@ import pytz
 from datetime import datetime
 from config.settings import AppConfig
 from utils.logger import get_logger
+from vertexai.generative_models import Part
 from .core import AICoreService
 
 logger = get_logger(__name__)
@@ -25,7 +26,10 @@ class AIParsingService:
         """使用核心服務生成內容的輔助函式"""
         if not self.core_service.is_available():
             raise ConnectionError("AI Core Service is not available.")
-        response = self.core_service.text_vision_model.generate_content(prompt)
+        # 將字串 prompt 轉換為 Vertex AI SDK 期望的格式
+        response = self.core_service.text_vision_model.generate_content(
+            [Part.from_text(prompt)]
+        )
         return self.core_service.clean_text(response.text)
 
     def parse_intent_from_text(self, text: str) -> dict:
@@ -70,7 +74,8 @@ class AIParsingService:
             return json.loads(cleaned_response)
         except Exception as e:
             logger.error(f"Error parsing intent from text: {e}", exc_info=True)
-            return {"intent": "general_chat", "data": {{}}}
+            # 修正語法錯誤，{{}} -> {}
+            return {"intent": "general_chat", "data": {}}
 
     def search_location(
             self,

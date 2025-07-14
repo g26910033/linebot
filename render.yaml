@@ -18,6 +18,8 @@ services:
         --max-requests 2000 \
         --max-requests-jitter 200
     envVars:
+      - key: RENDER_CACHE
+        value: clear
       - key: PYTHONUNBUFFERED
         value: 1
       - key: PYTHONDONTWRITEBYTECODE
