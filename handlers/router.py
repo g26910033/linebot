@@ -2,7 +2,7 @@
 指令路由器模組
 負責根據使用者輸入，將任務分派給對應的指令處理器。
 """
-from linebot.v3.messaging import MessagingApi
+from linebot.v3.messaging import Configuration
 from linebot.v3.webhooks import MessageEvent
 from .commands.help_handler import HelpCommandHandler
 from .commands.clear_memory_handler import ClearMemoryHandler
@@ -20,17 +20,17 @@ class Router:
     一個路由器，根據指令將事件分派給不同的處理器。
     """
 
-    def __init__(self, services: dict, line_bot_api: MessagingApi):
-        # 初始化所有指令處理器
-        self.help_handler = HelpCommandHandler(line_bot_api)
+    def __init__(self, services: dict, configuration: Configuration):
+        # 初始化所有指令處理器，傳遞 configuration
+        self.help_handler = HelpCommandHandler(configuration)
         self.clear_memory_handler = ClearMemoryHandler(
-            services['storage'], line_bot_api)
+            services['storage'], configuration)
         self.draw_handler = DrawCommandHandler(
-            services['image'], services['storage'], line_bot_api)
+            services['image'], services['storage'], configuration)
         self.todo_handler = TodoCommandHandler(
-            services['storage'], line_bot_api)
+            services['storage'], configuration)
         self.url_handler = URLHandler(
-            services['web'], services['text'], line_bot_api)
+            services['web'], services['text'], configuration)
         self.ai_intent_handler = AIIntentHandler(
             services['parsing'],
             services['text'],
@@ -39,7 +39,7 @@ class Router:
             services['news'],
             services['stock'],
             services['calendar'],
-            line_bot_api)
+            configuration)
         # ... 未來會在這裡初始化其他處理器
 
         # 定義指令與處理器的映射關係

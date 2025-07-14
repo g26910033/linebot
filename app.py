@@ -63,7 +63,7 @@ class LineBotApp:
         logger.debug("All services initialized.")
 
         # 初始化訊息處理器和 Webhook
-        # 修正：所有 Handler 都應該接收 configuration，而不是 line_bot_api
+        # 修正：所有 Handler 都應該接收 configuration
         self.text_handler = TextMessageHandler(services, self.configuration)
         self.image_handler = ImageMessageHandler(
             self.configuration, services['storage'])

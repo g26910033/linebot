@@ -3,7 +3,7 @@
 """
 import os
 from linebot.v3.messaging import (
-    MessagingApi, TextMessage, ReplyMessageRequest)
+    Configuration, ApiClient, MessagingApi, TextMessage, ReplyMessageRequest)
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,8 +12,8 @@ logger = get_logger(__name__)
 class HelpCommandHandler:
     """處理 'help' 或 '功能說明' 指令的類別。"""
 
-    def __init__(self, line_bot_api: MessagingApi):
-        self.line_bot_api = line_bot_api
+    def __init__(self, configuration: Configuration):
+        self.configuration = configuration
         self.help_text = self._load_help_text()
 
     def _load_help_text(self) -> str:
@@ -29,8 +29,10 @@ class HelpCommandHandler:
 
     def handle(self, reply_token: str):
         """處理指令並回覆功能說明的文字。"""
-        reply_request = ReplyMessageRequest(
-            reply_token=reply_token,
-            messages=[TextMessage(text=self.help_text)]
-        )
-        self.line_bot_api.reply_message(reply_request)
+        with ApiClient(self.configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            reply_request = ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=self.help_text)]
+            )
+            line_bot_api.reply_message(reply_request)
