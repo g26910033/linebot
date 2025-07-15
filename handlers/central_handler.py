@@ -11,7 +11,6 @@ from linebot.v3.messaging import (
     TemplateMessage, CarouselTemplate, CarouselColumn, URIAction,
     PushMessageRequest, ReplyMessageRequest, QuickReply, QuickReplyItem,
     MessageAction as QuickReplyMessageAction)
-from vertexai.generative_models import Youtube
 from services.ai.core import AICoreService
 from services.ai.parsing_service import AIParsingService
 from services.ai.image_service import AIImageService
@@ -110,12 +109,7 @@ class CentralHandler:
             summary = ""
             if self.web_service.is_youtube_url(url):
                 try:
-                    # 直接呼叫 Gemini 的內建工具
-                    video_summary = Youtube(
-                        url=url,
-                        question="請用繁體中文提供這部影片的詳細摘要"
-                    )
-                    summary = f"✅ AI 影片摘要完成！\n\n{video_summary}"
+                    summary = self.text_service.summarize_youtube_video(url)
                 except Exception as e:
                     logger.error(f"處理 YouTube 摘要時發生錯誤: {e}")
                     summary = '抱歉，處理這部影片時發生了一點問題，請稍後再試。'

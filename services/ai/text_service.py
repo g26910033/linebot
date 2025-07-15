@@ -1,48 +1,36 @@
 """
-AI 文字處理服務模組
-負責處理純文字的 AI 任務，如摘要、翻譯等。
+AI 文字服務模組
+負責處理所有與文字生成和處理相關的 AI 任務。
 """
+from .core import AICoreService
 from config.settings import AppConfig
 from utils.logger import get_logger
-from .core import AICoreService
 
 logger = get_logger(__name__)
 
 
 class AITextService:
     """
-    AI 文字處理服務類別，封裝與純文字相關的 AI 互動。
+    AI 文字服務類別，封裝所有與文字相關的 AI 互動。
     """
 
     def __init__(self, config: AppConfig, core_service: AICoreService):
         self.config = config
         self.core_service = core_service
 
-    def _generate_content(self, prompt: str) -> str:
-        """使用核心服務生成內容的輔助函式"""
-        if not self.core_service.is_available():
-            raise ConnectionError("AI Core Service is not available.")
-        response = self.core_service.text_vision_model.generate_content(prompt)
-        return self.core_service.clean_text(response.text)
-
-    def summarize_text(self, text: str, max_length: int = 50000):
+    def summarize_text(self, text: str, max_length: int = 50000) -> str:
         """使用 AI 模型總結長篇文章"""
         if not self.core_service.is_available():
             return "AI 服務未啟用。"
-
+        
         truncated_text = text[:max_length]
 
         prompt = f"""請你扮演一位專業的內容分析師。請用繁體中文，為以下文章產生一份約 200-300 字的精簡摘要，並在最後列出 3 個關鍵重點。
 --- 文章開始 ---
 {truncated_text}
 --- 文章結束 ---"""
-        try:
-            return self._generate_content(prompt)
-        except Exception as e:
-            logger.error(
-                f"Error during text summarization: {e}",
-                exc_info=True)
-            return "抱歉，摘要文章時發生錯誤。"
+        response, _ = self.core_service.chat_with_history(prompt, [])
+        return self.core_service.clean_text(response)
 
     def translate_text(self, user_message: str) -> str:
         """
@@ -63,11 +51,18 @@ class AITextService:
 
         翻譯結果:
         """
-        try:
-            # 這裡不需要 clean_text，因為提示已經要求純文字
-            response = self.core_service.text_vision_model.generate_content(
-                prompt)
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"Error during smart translation: {e}", exc_info=True)
-            return "抱歉，翻譯時發生錯誤。"
+        response, _ = self.core_service.chat_with_history(prompt, [])
+        return response.strip()
+
+    def summarize_youtube_video(self, url: str) -> str:
+        """
+        產生特定提示來觸發 Gemini 的 YouTube 摘要工具。
+        """
+        # 建立一個清晰的指令，告訴 AI 要做什麼
+        prompt = f"請用繁體中文，為這部 YouTube 影片提供一份詳細的內容摘要：{url}"
+
+        # 呼叫核心聊天功能，但給予一個全新的、獨立的對話歷史
+        # 這樣可以避免之前的對話干擾這個一次性的摘要任務
+        ai_response, _ = self.core_service.chat_with_history(prompt, [])
+
+        return f"✅ AI 影片摘要完成！\n\n{ai_response}"
