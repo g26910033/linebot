@@ -142,7 +142,8 @@ class CentralHandler:
         try:
             with ApiClient(self.configuration) as api_client:
                 line_bot_api_blob = MessagingApiBlob(api_client)
-                message_content = line_bot_api_blob.get_message_content(message_id=message_id)
+                # 修正：強制將 message_id 轉換為字串，以符合 pydantic 的型別驗證
+                message_content = line_bot_api_blob.get_message_content(message_id=str(message_id))
             image_data = message_content
             analysis_result = self.image_service.analyze_image(image_data)
             self._push_message(user_id, [TextMessage(text=analysis_result)])

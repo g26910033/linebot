@@ -66,10 +66,10 @@ class WebService:
                     return transcript
                 else:
                     logger.warning(f"Could not find downloaded subtitle file for {url}")
-                    return None
+                    return "抱歉，此 YouTube 影片沒有可用的字幕檔。"
         except Exception as e:
             logger.error(f"Error fetching YouTube transcript with yt-dlp for {url}: {e}")
-            return None
+            return "抱歉，此 YouTube 影片因地區或版權限制，無法進行分析。"
 
     def fetch_url_content(self, url: str) -> str | None:
         """
