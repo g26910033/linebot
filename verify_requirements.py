@@ -39,9 +39,10 @@ def check_critical_packages():
     """檢查關鍵套件的可用性"""
     critical_packages = [
         'line-bot-sdk==3.12.0',
-        'flask==3.0.3',
-        'gunicorn==21.2.0',
-        'cloudinary==1.40.0'
+        'flask==3.1.0',
+        'gunicorn==23.0.0',
+        'cloudinary==1.41.0',
+        'google-cloud-aiplatform==1.71.1'
     ]
     
     print("\n🎯 檢查關鍵套件...")
