@@ -28,9 +28,12 @@ class AIImageService:
             logger.warning("Image model name not configured. AIImageService will be disabled.")
             return
         try:
-            logger.info(f"Attempting to load ImageGenerationModel: {self.config.image_model_name}")
-            self.image_gen_model = ImageGenerationModel.from_pretrained(self.config.image_model_name)
-            logger.info(f"Image generation model '{self.config.image_model_name}' loaded successfully.")
+            response = self.image_gen_model.generate_images(
+                prompt=prompt, number_of_images=1)
+            if not response.images:
+                logger.warning(f"Image generation returned no images for prompt: {prompt}")
+                return None, "抱歉，AI 無法根據您的提示生成圖片，請換個說法試試看。"
+            return response.images[0]._image_bytes, "Vertex AI Imagen 繪圖成功！"
         except Exception as e:
             logger.critical(
                 f"CRITICAL: AIImageService model initialization failed: {e}",

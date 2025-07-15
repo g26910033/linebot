@@ -17,7 +17,6 @@ beautifulsoup4
 python-dateutil
 pytz
 waitress
-youtube-transcript-api-google-proxy
 python-dotenv
 psutil
 google-auth
