@@ -11,6 +11,7 @@ from linebot.v3.messaging import (
     TemplateMessage, CarouselTemplate, CarouselColumn, URIAction,
     PushMessageRequest, ReplyMessageRequest, QuickReply, QuickReplyItem,
     MessageAction as QuickReplyMessageAction)
+from vertexai.generative_models import Youtube
 from services.ai.core import AICoreService
 from services.ai.parsing_service import AIParsingService
 from services.ai.image_service import AIImageService
@@ -142,31 +143,26 @@ class CentralHandler:
         self._reply_message(reply_token, [TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)])
 
     def _handle_image_analysis_init(self, user_id, reply_token):
-        last_image_id = self.storage_service.get_user_last_image_id(user_id)
-        if last_image_id:
+        image_bytes = self.storage_service.get_user_last_image_bytes(user_id)
+        if image_bytes:
             self._reply_message(reply_token, [TextMessage(text="好的，正在為您分析您剛才上傳的圖片...")])
-            self._execute_in_background(self._analyze_image_task, user_id, last_image_id)
+            self._execute_in_background(self._analyze_image_task, user_id, image_bytes)
         else:
             self.storage_service.set_user_state(user_id, "waiting_for_analysis_image")
             self._reply_message(reply_token, [TextMessage(text="好的，請現在上傳您要分析的圖片。")])
 
-    def _analyze_image_task(self, user_id, message_id):
+    def _analyze_image_task(self, user_id, image_bytes):
         """A helper task for image analysis."""
         try:
-            with ApiClient(self.configuration) as api_client:
-                line_bot_api_blob = MessagingApiBlob(api_client)
-                # 修正：強制將 message_id 轉換為字串，以符合 pydantic 的型別驗證
-                message_content = line_bot_api_blob.get_message_content(message_id=str(message_id))
-            image_data = message_content
-            analysis_result = self.image_service.analyze_image(image_data)
+            analysis_result = self.image_service.analyze_image(image_bytes)
             self._push_message(user_id, [TextMessage(text=analysis_result)])
         except Exception as e:
             logger.error(f"Error during image analysis task for user {user_id}: {e}", exc_info=True)
             self._push_message(user_id, [TextMessage(text="抱歉，分析圖片時發生錯誤，請稍後再試。")])
 
     def _handle_image_to_image_init(self, user_id, reply_token):
-        last_image_id = self.storage_service.get_user_last_image_id(user_id)
-        if last_image_id:
+        image_bytes = self.storage_service.get_user_last_image_bytes(user_id)
+        if image_bytes:
             self.storage_service.set_user_state(user_id, "waiting_image_prompt")
             self._reply_message(reply_token, [TextMessage(text="好的，收到您上次傳的圖片了！請現在用文字告訴我，您想如何修改？")])
         else:
@@ -285,7 +281,10 @@ class CentralHandler:
             image_bytes, status_msg = self.image_service.generate_image(translated_prompt)
             if image_bytes:
                 image_url, upload_status = self.storage_service.upload_image(image_bytes)
-                messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)] if image_url else [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
+                if image_url:
+                    messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]
+                else:
+                    messages = [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
             else:
                 messages = [TextMessage(text=f"繪圖失敗: {status_msg}")]
             self._push_message(user_id, messages)

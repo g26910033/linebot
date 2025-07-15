@@ -60,16 +60,16 @@ class StorageService:
         key = self._get_redis_key(user_id, "chat_history")
         self.redis_client.delete(key)
 
-    def set_user_last_image_id(self, user_id: str, message_id: str):
-        """儲存使用者最後傳送的圖片 ID。"""
+    def save_user_last_image_bytes(self, user_id: str, image_bytes: bytes):
+        """儲存使用者最後傳送的圖片二進位內容。"""
         if not self.redis_client: return
-        key = self._get_redis_key(user_id, "last_image_id")
-        self.redis_client.set(key, message_id, ex=3600) # 存活一小時
+        key = self._get_redis_key(user_id, "last_image_bytes")
+        self.redis_client.set(key, image_bytes, ex=3600) # 存活一小時
 
-    def get_user_last_image_id(self, user_id: str) -> str | None:
-        """檢索使用者最後傳送的圖片 ID。"""
+    def get_user_last_image_bytes(self, user_id: str) -> bytes | None:
+        """檢索使用者最後傳送的圖片二進位內容。"""
         if not self.redis_client: return None
-        key = self._get_redis_key(user_id, "last_image_id")
+        key = self._get_redis_key(user_id, "last_image_bytes")
         return self.redis_client.get(key)
 
     def set_user_last_location(self, user_id: str, latitude: float, longitude: float):

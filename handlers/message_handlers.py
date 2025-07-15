@@ -4,7 +4,7 @@
 """
 import threading
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, TextMessage, ImageMessage,
+    Configuration, ApiClient, MessagingApi, MessagingApiBlob, TextMessage, ImageMessage,
     QuickReply, QuickReplyItem, MessageAction as QuickReplyMessageAction,
     PushMessageRequest, ReplyMessageRequest)
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
@@ -55,23 +55,33 @@ class ImageMessageHandler(BaseMessageHandler):
         message_id = event.message.id
         logger.info(f"Received image from {user_id}, message_id: {message_id}")
         
+        # 立刻下載圖片內容
+        try:
+            with ApiClient(self.configuration) as api_client:
+                line_bot_api_blob = MessagingApiBlob(api_client)
+                image_bytes = line_bot_api_blob.get_message_content(message_id=str(message_id))
+        except Exception as e:
+            logger.error(f"Failed to download image content for message_id {message_id}: {e}", exc_info=True)
+            self.text_handler.central_handler._reply_message(reply_token, [TextMessage(text="抱歉，讀取您上傳的圖片時發生錯誤。")])
+            return
+
+        # 將圖片的二進位內容存到 Redis
+        self.storage_service.save_user_last_image_bytes(user_id, image_bytes)
+        
         user_state = self.storage_service.get_user_state(user_id)
 
         if user_state == "waiting_for_analysis_image":
             self.storage_service.set_user_state(user_id, "") # 清除狀態
-            self.storage_service.set_user_last_image_id(user_id, message_id)
             # 觸發分析流程
             fake_event = MessageEvent(source=event.source, reply_token=event.reply_token, message=TextMessage(text="[指令]圖片分析"), timestamp=event.timestamp, mode=event.mode)
             self.text_handler.handle(fake_event)
         elif user_state == "waiting_for_i2i_image":
             self.storage_service.set_user_state(user_id, "waiting_image_prompt") # 進入下一狀態
-            self.storage_service.set_user_last_image_id(user_id, message_id)
             with ApiClient(self.configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
                 reply_request = ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text="好的，收到基底圖片了！請現在用文字告訴我，您想如何修改？")])
                 line_bot_api.reply_message(reply_request)
         else:
-            self.storage_service.set_user_last_image_id(user_id, message_id)
             quick_reply = QuickReply(items=[
                 QuickReplyItem(action=QuickReplyMessageAction(label="🔍 圖片分析", text="[指令]圖片分析")),
                 QuickReplyItem(action=QuickReplyMessageAction(label="🎨 以圖生圖", text="[指令]以圖生圖")),
