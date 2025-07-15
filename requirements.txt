@@ -1,43 +1,44 @@
-# 統一依賴管理 - 安全且經過測試的版本組合
-# 核心 LINE Bot 依賴 (保持穩定版本)
+# LINE Bot 統一依賴管理
+# 適用於 Render 免費方案，保持 LINE Bot SDK 3.12.0 安全版本
+
+# ===== 核心依賴 =====
 line-bot-sdk==3.12.0
 
-# Web 框架和伺服器
+# ===== Web 框架 =====
 flask==3.0.3
 gunicorn==22.0.0
-waitress==3.0.0
 
-# Google Cloud 和 AI 服務
+# ===== Google Cloud AI 服務 =====
 google-cloud-aiplatform==1.43.0
 google-auth>=2.28.0
 google-cloud-storage>=2.14.0
 vertexai>=1.43.0
 
-# 圖片和媒體處理
+# ===== 圖片和媒體處理 =====
 cloudinary==1.40.0
 Pillow==10.4.0
 
-# 資料庫和快取
-redis==5.0.3
-
-# 網路和安全
+# ===== 網路和安全 =====
 requests>=2.32.3
 urllib3>=2.2.1
 certifi>=2024.2.2
 
-# 資料處理和解析
+# ===== 資料處理 =====
 beautifulsoup4>=4.12.3
 python-dateutil>=2.9.0
 pytz>=2024.1
 python-dotenv>=1.0.1
 
-# 系統監控
+# ===== 系統工具 =====
 psutil>=5.9.8
 
-# YouTube 和媒體
+# ===== 媒體處理 =====
 yt-dlp>=2024.3.10
 youtube-transcript-api>=0.6.2
 
-# 背景任務處理
-celery>=5.3.6
-redis[hiredis]>=5.0.3
+# ===== 可選依賴 =====
+# 如果使用 Redis 快取，取消下行註解
+redis==5.0.3
+
+# 如果升級到付費方案並需要背景任務，取消下行註解
+# celery>=5.3.6
