@@ -9,32 +9,32 @@ flask==3.0.3
 gunicorn==22.0.0
 
 # ===== Google Cloud AI 服務 =====
-google-cloud-aiplatform==1.43.0
-google-auth>=2.28.0
-google-cloud-storage>=2.14.0
-vertexai>=1.43.0
+google-cloud-aiplatform==1.42.1
+google-auth==2.28.2
+google-cloud-storage==2.14.0
+vertexai==1.42.1
 
 # ===== 圖片和媒體處理 =====
 cloudinary==1.40.0
 Pillow==10.4.0
 
 # ===== 網路和安全 =====
-requests>=2.32.3
-urllib3>=2.2.1
-certifi>=2024.2.2
+requests==2.32.3
+urllib3==2.2.1
+certifi==2024.2.2
 
 # ===== 資料處理 =====
-beautifulsoup4>=4.12.3
-python-dateutil>=2.9.0
-pytz>=2024.1
-python-dotenv>=1.0.1
+beautifulsoup4==4.12.3
+python-dateutil==2.9.0.post0
+pytz==2024.1
+python-dotenv==1.0.1
 
 # ===== 系統工具 =====
-psutil>=5.9.8
+psutil==5.9.8
 
 # ===== 媒體處理 =====
-yt-dlp>=2024.3.10
-youtube-transcript-api>=0.6.2
+yt-dlp==2024.3.10
+youtube-transcript-api==0.6.2
 
 # ===== 可選依賴 =====
 # 如果使用 Redis 快取，取消下行註解

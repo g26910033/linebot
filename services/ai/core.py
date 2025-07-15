@@ -1,9 +1,13 @@
 """
 AI 核心服務模組
 負責與 Google Vertex AI 的基本互動，包含模型初始化和歷史對話。
+加入配額管理和重試機制。
 """
 import re
+import time
+import random
 from vertexai.generative_models import GenerativeModel, Part, Content
+from google.api_core import exceptions as gcp_exceptions
 from config.settings import AppConfig
 from utils.logger import get_logger
 
@@ -42,8 +46,31 @@ class AICoreService:
         cleaned_text = re.sub(r'[*#]', '', cleaned_text)
         return cleaned_text.strip()
 
+    def _retry_with_backoff(self, func, max_retries=3, base_delay=1):
+        """帶有指數退避的重試機制"""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except gcp_exceptions.ResourceExhausted as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"配額耗盡，已重試 {max_retries} 次: {e}")
+                    raise
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"配額限制，等待 {delay:.2f} 秒後重試 (第 {attempt + 1} 次)")
+                time.sleep(delay)
+            except gcp_exceptions.DeadlineExceeded as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"請求超時，已重試 {max_retries} 次: {e}")
+                    raise
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"請求超時，等待 {delay:.2f} 秒後重試 (第 {attempt + 1} 次)")
+                time.sleep(delay)
+            except Exception as e:
+                logger.error(f"未預期的錯誤: {e}")
+                raise
+
     def chat_with_history(self, user_message: str, history: list):
-        """使用 ChatSession 進行有記憶的對話"""
+        """使用 ChatSession 進行有記憶的對話，加入重試機制"""
         if not self.is_available():
             return "AI 服務未啟用。", []
 
@@ -57,12 +84,12 @@ class AICoreService:
                     reconstructed_history.append(
                         Content(role=role, parts=parts))
 
-        try:
+        def _chat_request():
             chat_session = self.text_vision_model.start_chat(
                 history=reconstructed_history)
             response = chat_session.send_message(user_message)
             cleaned_text = self.clean_text(response.text)
-
+            
             updated_history = [
                 {
                     "role": c.role,
@@ -71,8 +98,13 @@ class AICoreService:
                 for c in chat_session.history
             ]
             return cleaned_text, updated_history
+
+        try:
+            return self._retry_with_backoff(_chat_request)
+        except gcp_exceptions.ResourceExhausted:
+            return "抱歉，AI 服務目前使用量過高，請稍後再試。", history
+        except gcp_exceptions.DeadlineExceeded:
+            return "抱歉，AI 服務回應超時，請稍後再試。", history
         except Exception as e:
-            logger.error(
-                f"Error during chat session with Vertex AI: {e}",
-                exc_info=True)
+            logger.error(f"AI 對話時發生錯誤: {e}", exc_info=True)
             return "抱歉，AI 對話時發生錯誤，請稍後再試。", history

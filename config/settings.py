@@ -90,6 +90,7 @@ class AppConfig:
 def _load_gcp_credentials() -> Dict[str, str]:
     """
     智慧地載入 GCP 憑證，支援本地端檔案和 Render 環境變數。
+    優化安全性和錯誤處理。
     """
     gcp_credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     gcp_json_str = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
@@ -97,27 +98,44 @@ def _load_gcp_credentials() -> Dict[str, str]:
     gcp_info = {}
     service_account_json = ""
 
-    if gcp_credentials_path:
-        print(f"Loading GCP credentials from file: {gcp_credentials_path}")
-        with open(gcp_credentials_path, 'r', encoding='utf-8') as f:
-            gcp_info = json.load(f)
-        service_account_json = json.dumps(gcp_info)
-    elif gcp_json_str:
-        print("Loading GCP credentials from environment variable string.")
-        gcp_info = json.loads(gcp_json_str)
-        service_account_json = gcp_json_str
-    else:
-        raise ValueError(
-            "Neither GOOGLE_APPLICATION_CREDENTIALS nor "
-            "GCP_SERVICE_ACCOUNT_JSON is set.")
+    try:
+        if gcp_credentials_path:
+            print(f"Loading GCP credentials from file: {gcp_credentials_path}")
+            with open(gcp_credentials_path, 'r', encoding='utf-8') as f:
+                gcp_info = json.load(f)
+            service_account_json = json.dumps(gcp_info)
+        elif gcp_json_str:
+            print("Loading GCP credentials from environment variable.")
+            # 驗證 JSON 格式
+            gcp_info = json.loads(gcp_json_str)
+            service_account_json = gcp_json_str
+        else:
+            raise ValueError(
+                "Neither GOOGLE_APPLICATION_CREDENTIALS nor "
+                "GCP_SERVICE_ACCOUNT_JSON is set.")
 
-    project_id = gcp_info.get("project_id")
-    if not project_id:
-        raise ValueError(
-            "'project_id' not found in GCP service account credentials.")
+        # 驗證必要欄位
+        required_fields = ["type", "project_id", "private_key_id", "private_key", "client_email"]
+        missing_fields = [field for field in required_fields if not gcp_info.get(field)]
+        
+        if missing_fields:
+            raise ValueError(f"Missing required fields in GCP credentials: {missing_fields}")
 
-    return {"gcp_project_id": project_id,
-            "gcp_service_account_json": service_account_json}
+        project_id = gcp_info.get("project_id")
+        client_email = gcp_info.get("client_email")
+        
+        print(f"GCP credentials loaded successfully for project: {project_id}")
+        print(f"Service account: {client_email}")
+
+        return {
+            "gcp_project_id": project_id,
+            "gcp_service_account_json": service_account_json
+        }
+
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in GCP credentials: {e}")
+    except Exception as e:
+        raise ValueError(f"Error loading GCP credentials: {e}")
 
 
 def load_config() -> AppConfig:
