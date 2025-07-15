@@ -61,9 +61,10 @@ class LineBotApp:
         services = self._initialize_services()
         logger.debug("All services initialized.")
 
-        # 修正：將 text_handler 傳遞給 location_handler
+        # 修正：將 text_handler 傳遞給 image_handler 和 location_handler
         self.text_handler = TextMessageHandler(services, self.configuration)
-        self.image_handler = ImageMessageHandler(self.configuration, services['storage'])
+        self.image_handler = ImageMessageHandler(
+            self.configuration, services['storage'], self.text_handler)
         self.location_handler = LocationMessageHandler(
             self.configuration, services['storage'], self.text_handler)
 

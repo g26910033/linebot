@@ -70,7 +70,7 @@ class CentralHandler:
         elif intent == "show_weather_news_options":
             self._handle_show_weather_news_options(reply_token)
         elif intent == "weather":
-            self._handle_weather(user_id, data)
+            self._handle_weather(user_id, reply_token, data)
         elif intent == "stock":
             self._handle_stock(user_id, data)
         elif intent == "news":
@@ -136,9 +136,11 @@ class CentralHandler:
         self.storage_service.set_user_state(user_id, "waiting_for_i2i_image")
         self._reply_message(reply_token, [TextMessage(text="好的，請先上傳您要做為基底的圖片。")])
 
-    def _handle_weather(self, user_id, data):
+    def _handle_weather(self, user_id, reply_token, data):
         city = data.get("city")
-        if not city: return
+        if not city:
+            self._reply_message(reply_token, [TextMessage(text="請告訴我您想查詢哪個城市的天氣喔！")])
+            return
         query_type = data.get("type", "current")
         def task():
             if query_type == "forecast":
@@ -290,3 +292,10 @@ class CentralHandler:
             )
             columns.append(column)
         return TemplateMessage(alt_text=f'{city_name} 的天氣預報', template=CarouselTemplate(columns=columns[:10]))
+    
+    def handle_postback(self, event):
+        user_id = event.source.user_id
+        reply_token = event.reply_token
+        postback_data = event.postback.data
+        logger.info(f"Received postback from user {user_id}: '{postback_data}'")
+        self._reply_message(reply_token, [TextMessage(text=f"收到您的操作：{postback_data}")])

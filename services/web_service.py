@@ -108,7 +108,8 @@ class WebService:
                 return transcript
             else:
                 logger.warning(
-                    f"Could not get YouTube transcript for {video_id}, falling back to general web content fetch.")
+                    f"Could not get YouTube transcript for {video_id}.")
+                return "抱歉，無法獲取此 YouTube 影片的字幕內容。"
 
         try:
             response = requests.get(

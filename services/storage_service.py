@@ -2,6 +2,7 @@
 儲存服務模組
 負責與 Redis 和 Cloudinary 互動，處理資料的儲存與檢索。
 """
+import json
 import redis
 import cloudinary
 import cloudinary.uploader
