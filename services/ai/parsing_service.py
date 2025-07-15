@@ -37,7 +37,9 @@ class AIParsingService:
         current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
         prompt = f"""
         Analyze the user input and return a single JSON object with "intent" and "data".
-        Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "help", "draw", "clear_memory", "general_chat".
+        Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "help", "draw", "clear_memory", "image_features_options", "show_weather_news_options", "general_chat".
+        - If input is "天氣/新聞", intent is "show_weather_news_options".
+        - If input is "圖片功能", intent is "image_features_options".
         - weather: requires "city" and "type" (current/forecast).
         - stock: requires "symbol".
         - news: data is empty.

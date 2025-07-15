@@ -9,7 +9,8 @@ from datetime import datetime
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, TextMessage, ImageMessage,
     TemplateMessage, CarouselTemplate, CarouselColumn, URIAction,
-    PushMessageRequest, ReplyMessageRequest)
+    PushMessageRequest, ReplyMessageRequest, QuickReply, QuickReplyItem,
+    MessageAction as QuickReplyMessageAction)
 from services.ai.core import AICoreService
 from services.ai.parsing_service import AIParsingService
 from services.ai.image_service import AIImageService
@@ -38,15 +39,6 @@ class CentralHandler:
         self.web_service: WebService = services['web']
         self.configuration = configuration
 
-    def handle_postback(self, event):
-        user_id = event.source.user_id
-        reply_token = event.reply_token
-        postback_data = event.postback.data
-        logger.info(f"Received postback from user {user_id}: '{postback_data}'")
-        # 目前 postback 的邏輯比較簡單，未來可以擴充
-        # 暫時只回覆一個確認訊息
-        self._reply_message(reply_token, [TextMessage(text=f"收到您的操作：{postback_data}")])
-
     def handle(self, event):
         user_id = event.source.user_id
         user_message = event.message.text.strip()
@@ -55,6 +47,14 @@ class CentralHandler:
         # 優先處理 URL
         if self.web_service.is_url(user_message):
             self._handle_url_message(user_id, user_message)
+            return
+        
+        # 處理圖片相關的特殊指令
+        if user_message == "[指令]圖片分析":
+            self._handle_image_analysis_init(user_id, reply_token)
+            return
+        if user_message == "[指令]以圖生圖":
+            self._handle_image_to_image_init(user_id, reply_token)
             return
 
         # 意圖解析
@@ -65,7 +65,11 @@ class CentralHandler:
         logger.info(f"Intent: {intent}, Data: {data}")
 
         # 根據意圖分派任務
-        if intent == "weather":
+        if intent == "image_features_options":
+            self._handle_image_features_options(reply_token)
+        elif intent == "show_weather_news_options":
+            self._handle_show_weather_news_options(reply_token)
+        elif intent == "weather":
             self._handle_weather(user_id, data)
         elif intent == "stock":
             self._handle_stock(user_id, data)
@@ -83,7 +87,6 @@ class CentralHandler:
             self._handle_draw(user_id, reply_token, data)
         elif intent == "clear_memory":
             self._handle_clear_memory(user_id, reply_token)
-        # ... 其他意圖
         else: # general_chat
             self._handle_chat(user_id, user_message)
 
@@ -103,13 +106,35 @@ class CentralHandler:
     def _handle_url_message(self, user_id, url):
         def task():
             self._push_message(user_id, [TextMessage(text="收到您的網址了，正在為您分析摘要...")])
-            content = self.web_service.scrape_text_from_url(url)
+            content = self.web_service.fetch_url_content(url)
             if not content:
                 summary = "抱歉，無法讀取這個網址的內容。"
             else:
                 summary = self.text_service.summarize_text(content)
             self._push_message(user_id, [TextMessage(text=f"網址摘要：\n\n{summary}")])
         self._execute_in_background(task)
+
+    def _handle_image_features_options(self, reply_token):
+        quick_reply = QuickReply(items=[
+            QuickReplyItem(action=QuickReplyMessageAction(label="🔍 圖片分析", text="[指令]圖片分析")),
+            QuickReplyItem(action=QuickReplyMessageAction(label="🎨 以圖生圖", text="[指令]以圖生圖")),
+        ])
+        self._reply_message(reply_token, [TextMessage(text="請問您想使用哪種圖片功能？", quick_reply=quick_reply)])
+
+    def _handle_show_weather_news_options(self, reply_token):
+        quick_reply = QuickReply(items=[
+            QuickReplyItem(action=QuickReplyMessageAction(label="🌦️ 看天氣", text="今天天氣如何")),
+            QuickReplyItem(action=QuickReplyMessageAction(label="📰 看新聞", text="頭條新聞"))
+        ])
+        self._reply_message(reply_token, [TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)])
+
+    def _handle_image_analysis_init(self, user_id, reply_token):
+        self.storage_service.set_user_state(user_id, "waiting_for_analysis_image")
+        self._reply_message(reply_token, [TextMessage(text="好的，請現在上傳您要分析的圖片。")])
+
+    def _handle_image_to_image_init(self, user_id, reply_token):
+        self.storage_service.set_user_state(user_id, "waiting_for_i2i_image")
+        self._reply_message(reply_token, [TextMessage(text="好的，請先上傳您要做為基底的圖片。")])
 
     def _handle_weather(self, user_id, data):
         city = data.get("city")
@@ -161,7 +186,9 @@ class CentralHandler:
 
     def _handle_nearby_search(self, user_id, reply_token, data):
         query = data.get("query")
-        if not query: return
+        if not query:
+            self._reply_message(reply_token, [TextMessage(text="您好，請問想搜尋附近的什麼地點呢？")])
+            return
         
         last_location = self.storage_service.get_user_last_location(user_id)
         if not last_location:
@@ -180,15 +207,31 @@ class CentralHandler:
         self._execute_in_background(task)
 
     def _handle_help(self, reply_token):
-        try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = os.path.join(base_dir, "help_text.md")
-            with open(file_path, "r", encoding="utf-8") as f:
-                help_text = f.read()
-        except FileNotFoundError:
-            logger.error(f"help_text.md not found at {file_path}")
-            help_text = "抱歉，功能說明文件遺失了。"
-        self._reply_message(reply_token, [TextMessage(text=help_text)])
+        help_text = """
+這是一個 AI 助理機器人，你可以跟我聊天，或使用以下指令：
+
+**基本功能**
+- **功能說明**: 顯示此訊息。
+- **清除對話**: 清除我們的對話歷史，重新開始。
+
+**工具**
+- **畫 [描述]**: 我會根據你的描述畫一張圖。例如：`畫 一隻在月球上開心的貓`
+- **待辦清單**: 顯示你目前的待辦事項。
+- **新增待辦 [事項]**: 新增一項待辦事項。例如：`新增待辦 明天要買牛奶`
+- **完成待辦 [編號或文字]**: 完成一項待辦事項。例如：`完成待辦 1` 或 `完成待辦 買牛奶`
+- **傳送網址**: 我會幫你分析網頁內容並提供摘要。
+- **傳送位置**: 我會記住你的位置，你可以問我附近有什麼。例如：`尋找附近的咖啡廳`
+
+**AI 進階功能**
+- **查詢天氣**: 例如：`台北今天天氣如何？` 或 `東京未來一週天氣預報`
+- **查詢股價**: 例如：`台積電股價` 或 `查詢 AAPL`
+- **查詢新聞**: `今天有什麼頭條新聞？`
+- **新增日曆行程**: 例如：`幫我設定一個明天下午三點的會議，標題是專案討論`
+- **翻譯**: 例如：`把你好翻譯成英文`
+
+有任何問題，隨時都可以問我！
+        """
+        self._reply_message(reply_token, [TextMessage(text=help_text.strip())])
 
     def _handle_draw(self, user_id, reply_token, data):
         prompt = data.get("prompt")
