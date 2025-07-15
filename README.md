@@ -190,6 +190,14 @@ pip install --no-cache-dir --disable-pip-version-check --timeout 300 -r requirem
 - [ ] **服務帳戶權限**: `aiplatform.user`, `storage.objectAdmin`, `ml.developer`
 - [ ] **配額檢查**: GCP Console → API 配額頁面
 
+**常見警告處理**:
+```bash
+# 警告: google-cloud-aiplatform 1.71.1 does not provide the extra 'all'
+# 這是正常警告，不影響功能，已在 requirements.txt 中優化
+
+# 如果出現 google-crc32c 相關錯誤，已自動包含相容版本
+```
+
 #### **7. 圖片功能問題**
 - [ ] **Cloudinary 設定**: 確認所有環境變數正確
 - [ ] **圖片格式**: 支援 JPEG, PNG, GIF
