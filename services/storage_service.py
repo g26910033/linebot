@@ -85,6 +85,32 @@ class StorageService:
         key = self._get_redis_key(user_id, "last_image_bytes")
         return self.redis_client.get(key)
 
+    def cache_image_analysis(self, image_hash: str, analysis_result: str, ttl: int = 86400):
+        """快取圖片分析結果 (24小時)"""
+        if not self.redis_client: return
+        key = f"linebot:image_analysis:{image_hash}"
+        self.redis_client.set(key, analysis_result, ex=ttl)
+
+    def get_cached_image_analysis(self, image_hash: str) -> str | None:
+        """取得快取的圖片分析結果"""
+        if not self.redis_client: return None
+        key = f"linebot:image_analysis:{image_hash}"
+        result = self.redis_client.get(key)
+        return result.decode('utf-8') if result else None
+
+    def cache_generated_image(self, prompt_hash: str, image_url: str, ttl: int = 604800):
+        """快取生成的圖片 URL (7天)"""
+        if not self.redis_client: return
+        key = f"linebot:generated_image:{prompt_hash}"
+        self.redis_client.set(key, image_url, ex=ttl)
+
+    def get_cached_generated_image(self, prompt_hash: str) -> str | None:
+        """取得快取的生成圖片 URL"""
+        if not self.redis_client: return None
+        key = f"linebot:generated_image:{prompt_hash}"
+        result = self.redis_client.get(key)
+        return result.decode('utf-8') if result else None
+
     def set_user_last_location(self, user_id: str, latitude: float, longitude: float):
         """儲存使用者最後分享的位置。"""
         if not self.redis_client: return

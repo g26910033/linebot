@@ -78,6 +78,21 @@ class LineBotApp:
 
     def _initialize_services(self) -> dict:
         core_service = AICoreService(self.config)
+        storage_service = StorageService(self.config)
+        
+        # 初始化圖片服務並注入儲存服務以啟用快取
+        image_service = AIImageService(self.config, core_service)
+        image_service.set_storage_service(storage_service)
+        
+        # 初始化背景任務管理器
+        try:
+            from services.background_tasks import BackgroundTaskManager
+            background_task_manager = BackgroundTaskManager(storage_service)
+            logger.info("Background task manager initialized.")
+        except Exception as e:
+            logger.warning(f"Background task manager initialization failed: {e}")
+            background_task_manager = None
+        
         stock_service = None
         if self.config.finnhub_api_key:
             stock_service = StockService(self.config.finnhub_api_key)
@@ -89,14 +104,15 @@ class LineBotApp:
         return {
             "core": core_service,
             "parsing": AIParsingService(self.config, core_service),
-            "image": AIImageService(self.config, core_service),
+            "image": image_service,
             "text": AITextService(self.config, core_service, web_service),
-            "storage": StorageService(self.config),
+            "storage": storage_service,
             "web": web_service,
             "weather": WeatherService(self.config.openweather_api_key),
             "news": NewsService(self.config.news_api_key),
             "calendar": CalendarService(),
-            "stock": stock_service
+            "stock": stock_service,
+            "background_tasks": background_task_manager
         }
 
     def _initialize_vertex_ai(self):

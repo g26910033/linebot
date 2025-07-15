@@ -1,4 +1,5 @@
 services:
+  # 主要 Web 服務
   - type: web
     name: ai-linebot
     runtime: python
@@ -20,6 +21,8 @@ services:
         value: 1
       - key: PYTHONDONTWRITEBYTECODE
         value: 1
+      - key: RENDER
+        value: 1
       # 建議於 Render 控制台設定下列敏感資訊：
       # - LINE_CHANNEL_SECRET
       # - LINE_CHANNEL_ACCESS_TOKEN
@@ -33,6 +36,27 @@ services:
       maxInstances: 5
       targetCPUPercent: 70
       targetMemoryPercent: 80
+
+  # Celery 背景任務處理器 (可選，需要付費方案)
+  # - type: worker
+  #   name: ai-linebot-worker
+  #   runtime: python
+  #   plan: starter
+  #   autoDeploy: true
+  #   buildCommand: |
+  #     pip install --upgrade pip
+  #     pip install -r requirements.txt
+  #   startCommand: python celery_worker.py
+  #   envVars:
+  #     - key: PYTHONUNBUFFERED
+  #       value: 1
+  #     - key: PYTHONDONTWRITEBYTECODE
+  #       value: 1
+  #     - key: RENDER
+  #       value: 1
+  #   scaling:
+  #     minInstances: 1
+  #     maxInstances: 2
 
   # Redis 服務（可選，若不使用外部 Redis）
   - type: redis
