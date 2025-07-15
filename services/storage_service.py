@@ -20,11 +20,24 @@ class StorageService:
     def __init__(self, config: AppConfig):
         self.config = config
         try:
-            self.redis_client = redis.from_url(config.redis_url)
-            self.redis_client.ping()
-            logger.info("Redis client connected successfully")
+            if config.redis_url:
+                self.redis_client = redis.from_url(
+                    config.redis_url,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=30
+                )
+                self.redis_client.ping()
+                logger.info("Redis client connected successfully")
+            else:
+                logger.warning("Redis URL not configured, storage service will be limited")
+                self.redis_client = None
         except redis.exceptions.ConnectionError as e:
             logger.error(f"Redis connection failed: {e}")
+            self.redis_client = None
+        except Exception as e:
+            logger.error(f"Unexpected error initializing Redis: {e}")
             self.redis_client = None
 
         try:

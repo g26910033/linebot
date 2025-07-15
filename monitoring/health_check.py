@@ -71,11 +71,36 @@ class HealthChecker:
         Returns:
             Dict[str, bool]: 各服務狀態。
         """
-        services: Dict[str, bool] = {
-            "ai_service": True,
-            "storage_service": True,
-            "database": True,
-        }
+        services: Dict[str, bool] = {}
+        
+        # 檢查 Redis 連線
+        try:
+            import redis
+            from config.settings import load_config
+            config = load_config()
+            if config.redis_url:
+                redis_client = redis.from_url(config.redis_url)
+                redis_client.ping()
+                services["redis"] = True
+            else:
+                services["redis"] = False
+        except Exception:
+            services["redis"] = False
+        
+        # 檢查 Vertex AI 可用性
+        try:
+            import vertexai
+            services["vertex_ai"] = True
+        except Exception:
+            services["vertex_ai"] = False
+            
+        # 檢查 Cloudinary 配置
+        try:
+            import cloudinary
+            services["cloudinary"] = True
+        except Exception:
+            services["cloudinary"] = False
+            
         logger.debug("[HealthChecker] Service status: %s", services)
         return services
 

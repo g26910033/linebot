@@ -30,8 +30,9 @@ services:
       # - REDIS_URL
     scaling:
       minInstances: 1
-      maxInstances: 3
-      targetCPUPercent: 90
+      maxInstances: 5
+      targetCPUPercent: 70
+      targetMemoryPercent: 80
 
   # Redis 服務（可選，若不使用外部 Redis）
   - type: redis
