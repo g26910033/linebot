@@ -22,3 +22,4 @@ python-dotenv
 psutil
 google-auth
 google-cloud-storage
+yt-dlp

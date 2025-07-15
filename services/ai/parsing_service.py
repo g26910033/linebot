@@ -40,7 +40,7 @@ class AIParsingService:
         Possible intents: "weather", "stock", "news", "calendar", "translation", "nearby_search", "help", "draw", "clear_memory", "image_features_options", "show_weather_news_options", "general_chat".
         - If input is "天氣/新聞", intent is "show_weather_news_options".
         - If input is "圖片功能", intent is "image_features_options".
-        - weather: requires "city" (if not provided, set to null) and "type" (current/forecast).
+        - weather: requires "city" (if not provided, set to null) and "type" (current/forecast). Recognize common city names, e.g., "台北" is "臺北市".
         - stock: requires "symbol".
         - news: data is empty.
         - calendar: requires "title", "start_time", "end_time".

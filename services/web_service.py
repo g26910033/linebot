@@ -4,9 +4,10 @@ Handles fetching content from URLs.
 """
 import re
 import requests
+import json
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, parse_qs
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+from urllib.parse import urlparse
+import yt_dlp
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,13 +17,9 @@ class WebService:
     """A service for fetching and parsing web content."""
 
     _URL_PATTERN = re.compile(r'https?://\S+')
+    _YOUTUBE_PATTERN = re.compile(r'(https?://)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)/(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})')
 
     def __init__(self, timeout: int = 10):
-        """
-        Initializes the WebService.
-        Args:
-            timeout (int): Request timeout in seconds.
-        """
         self.timeout = timeout
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -32,100 +29,42 @@ class WebService:
         """Checks if the given text is a URL."""
         return self._URL_PATTERN.match(text) is not None
 
-    def _get_youtube_video_id(self, url: str) -> str | None:
-        """從 YouTube 連結中提取影片 ID。"""
-        parsed_url = urlparse(url)
-        if parsed_url.hostname in [
-            'www.youtube.com',
-            'youtube.com',
-                'm.youtube.com']:
-            if parsed_url.path == '/watch':
-                return parse_qs(parsed_url.query).get('v', [None])[0]
-            elif parsed_url.path.startswith('/youtu.be/'):
-                return parsed_url.path.split('/')[-1]
-        return None
-
-    def _get_youtube_transcript(self, video_id: str) -> str | None:
-        """獲取 YouTube 影片的字幕。"""
+    def _get_youtube_info(self, url: str) -> str | None:
+        """使用 yt-dlp 獲取 YouTube 影片的標題和描述。"""
+        ydl_opts = {
+            'quiet': True,
+            'extract_flat': True,
+            'force_generic_extractor': True,
+        }
         try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = None
-            if 'zh-TW' in transcript_list._generated_transcripts:
-                transcript = transcript_list.find_transcript(['zh-TW'])
-            elif 'en' in transcript_list._generated_transcripts:
-                transcript = transcript_list.find_transcript(['en'])
-            else:
-                for t in transcript_list:
-                    transcript = t
-                    break
-
-            if transcript:
-                if transcript.is_generated and transcript.language_code != 'zh-TW':
-                    try:
-                        translated_transcript = transcript.translate('zh-TW')
-                        full_transcript = " ".join(
-                            [entry['text'] for entry in translated_transcript.fetch()])
-                        logger.info(
-                            f"Translated YouTube transcript to zh-TW for video {video_id}")
-                        return full_transcript
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to translate YouTube transcript for {video_id}: {e}")
-                        full_transcript = " ".join(
-                            [entry['text'] for entry in transcript.fetch()])
-                        return full_transcript
-                else:
-                    full_transcript = " ".join(
-                        [entry['text'] for entry in transcript.fetch()])
-                    logger.info(
-                        f"Fetched YouTube transcript for video {video_id}")
-                    return full_transcript
-            return None
-        except NoTranscriptFound:
-            logger.warning(
-                f"No transcript found for YouTube video ID: {video_id}")
-            return None
-        except TranscriptsDisabled:
-            logger.warning(
-                f"Transcripts are disabled for YouTube video ID: {video_id}")
-            return None
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', '無標題')
+                description = info.get('description', '無描述')
+                return f"YouTube 影片資訊：\n標題：{title}\n\n描述摘要：\n{description[:500]}..."
         except Exception as e:
-            logger.error(
-                f"Error fetching YouTube transcript for {video_id}: {e}")
-            return None
+            logger.error(f"Error fetching YouTube info with yt-dlp for {url}: {e}")
+            return "抱歉，無法獲取此 YouTube 影片的資訊。"
 
     def fetch_url_content(self, url: str) -> str | None:
         """
         Fetches the main text content from a given URL.
-        Prioritizes YouTube transcript if it's a YouTube video.
+        Uses yt-dlp for YouTube videos.
         """
-        video_id = self._get_youtube_video_id(url)
-        if video_id:
-            logger.info(
-                f"Detected YouTube URL, attempting to fetch transcript for video ID: {video_id}")
-            transcript = self._get_youtube_transcript(video_id)
-            if transcript:
-                return transcript
-            else:
-                logger.warning(
-                    f"Could not get YouTube transcript for {video_id}.")
-                return "抱歉，無法獲取此 YouTube 影片的字幕內容。"
+        if self._YOUTUBE_PATTERN.match(url):
+            logger.info(f"Detected YouTube URL, using yt-dlp for: {url}")
+            return self._get_youtube_info(url)
 
         try:
-            response = requests.get(
-                url, headers=self.headers, timeout=self.timeout)
+            response = requests.get(url, headers=self.headers, timeout=self.timeout)
             response.raise_for_status()
-
             soup = BeautifulSoup(response.content, 'html.parser')
             for script_or_style in soup(['script', 'style']):
                 script_or_style.decompose()
-
             text = soup.get_text()
             lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip()
-                      for line in lines for phrase in line.split("  "))
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
-
             return text
         except requests.RequestException as e:
             logger.error(f"Error fetching URL {url}: {e}")

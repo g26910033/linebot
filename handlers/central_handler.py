@@ -129,12 +129,35 @@ class CentralHandler:
         self._reply_message(reply_token, [TextMessage(text="請問您想看天氣還是新聞？", quick_reply=quick_reply)])
 
     def _handle_image_analysis_init(self, user_id, reply_token):
-        self.storage_service.set_user_state(user_id, "waiting_for_analysis_image")
-        self._reply_message(reply_token, [TextMessage(text="好的，請現在上傳您要分析的圖片。")])
+        last_image_id = self.storage_service.get_user_last_image_id(user_id)
+        if last_image_id:
+            self._reply_message(reply_token, [TextMessage(text="好的，正在為您分析您剛才上傳的圖片...")])
+            self._execute_in_background(self._analyze_image_task, user_id, last_image_id)
+        else:
+            self.storage_service.set_user_state(user_id, "waiting_for_analysis_image")
+            self._reply_message(reply_token, [TextMessage(text="好的，請現在上傳您要分析的圖片。")])
+
+    def _analyze_image_task(self, user_id, message_id):
+        """A helper task for image analysis."""
+        try:
+            with ApiClient(self.configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                message_content = line_bot_api.get_message_content(message_id=message_id)
+            image_data = message_content
+            analysis_result = self.image_service.analyze_image(image_data)
+            self._push_message(user_id, [TextMessage(text=analysis_result)])
+        except Exception as e:
+            logger.error(f"Error during image analysis task for user {user_id}: {e}", exc_info=True)
+            self._push_message(user_id, [TextMessage(text="抱歉，分析圖片時發生錯誤，請稍後再試。")])
 
     def _handle_image_to_image_init(self, user_id, reply_token):
-        self.storage_service.set_user_state(user_id, "waiting_for_i2i_image")
-        self._reply_message(reply_token, [TextMessage(text="好的，請先上傳您要做為基底的圖片。")])
+        last_image_id = self.storage_service.get_user_last_image_id(user_id)
+        if last_image_id:
+            self.storage_service.set_user_state(user_id, "waiting_image_prompt")
+            self._reply_message(reply_token, [TextMessage(text="好的，收到您上次傳的圖片了！請現在用文字告訴我，您想如何修改？")])
+        else:
+            self.storage_service.set_user_state(user_id, "waiting_for_i2i_image")
+            self._reply_message(reply_token, [TextMessage(text="好的，請先上傳您要做為基底的圖片。")])
 
     def _handle_weather(self, user_id, reply_token, data):
         city = data.get("city")
