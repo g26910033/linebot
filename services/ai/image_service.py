@@ -84,6 +84,9 @@ class AIImageService:
         try:
             response = self.image_gen_model.generate_images(
                 prompt=prompt, number_of_images=1)
+            if not response.images:
+                logger.warning(f"Image generation returned no images for prompt: {prompt}")
+                return None, "抱歉，AI 無法根據您的提示生成圖片，請換個說法試試看。"
             return response.images[0]._image_bytes, "Vertex AI Imagen 繪圖成功！"
         except Exception as e:
             logger.error(f"Vertex AI image generation failed: {e}")

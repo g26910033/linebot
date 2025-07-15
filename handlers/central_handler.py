@@ -7,7 +7,7 @@ import re
 from urllib.parse import quote_plus
 from datetime import datetime
 from linebot.v3.messaging import (
-    Configuration, ApiClient, MessagingApi, TextMessage, ImageMessage,
+    Configuration, ApiClient, MessagingApi, MessagingApiBlob, TextMessage, ImageMessage,
     TemplateMessage, CarouselTemplate, CarouselColumn, URIAction,
     PushMessageRequest, ReplyMessageRequest, QuickReply, QuickReplyItem,
     MessageAction as QuickReplyMessageAction)
@@ -141,8 +141,8 @@ class CentralHandler:
         """A helper task for image analysis."""
         try:
             with ApiClient(self.configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                message_content = line_bot_api.get_message_content(message_id=message_id)
+                line_bot_api_blob = MessagingApiBlob(api_client)
+                message_content = line_bot_api_blob.get_message_content(message_id=message_id)
             image_data = message_content
             analysis_result = self.image_service.analyze_image(image_data)
             self._push_message(user_id, [TextMessage(text=analysis_result)])
