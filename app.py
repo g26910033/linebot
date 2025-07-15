@@ -85,13 +85,14 @@ class LineBotApp:
         else:
             logger.warning("FINNHUB_API_KEY not set. Stock service is disabled.")
 
+        web_service = WebService()
         return {
             "core": core_service,
             "parsing": AIParsingService(self.config, core_service),
             "image": AIImageService(self.config, core_service),
-            "text": AITextService(self.config, core_service),
+            "text": AITextService(self.config, core_service, web_service),
             "storage": StorageService(self.config),
-            "web": WebService(),
+            "web": web_service,
             "weather": WeatherService(self.config.openweather_api_key),
             "news": NewsService(self.config.news_api_key),
             "calendar": CalendarService(),

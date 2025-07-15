@@ -57,6 +57,12 @@ class CentralHandler:
             self._handle_image_to_image_init(user_id, reply_token)
             return
 
+        # 檢查是否有待處理的圖片生成任務
+        user_state = self.storage_service.get_user_state(user_id)
+        if user_state == "waiting_image_prompt":
+            self._handle_image_to_image_generation(user_id, reply_token, user_message)
+            return
+
         # 意圖解析
         intent_data = self.parsing_service.parse_intent_from_text(user_message)
         intent = intent_data.get("intent", "general_chat")
@@ -294,6 +300,34 @@ class CentralHandler:
             ai_response, updated_history = self.core_service.chat_with_history(user_message, history)
             self.storage_service.save_chat_history(user_id, updated_history)
             self._push_message(user_id, [TextMessage(text=ai_response)])
+        self._execute_in_background(task)
+
+    def _handle_image_to_image_generation(self, user_id, reply_token, prompt):
+        image_bytes = self.storage_service.get_user_last_image_bytes(user_id)
+        if not image_bytes:
+            self._reply_message(reply_token, [TextMessage(text="抱歉，找不到您之前上傳的圖片，請重新從上傳圖片開始。")])
+            self.storage_service.set_user_state(user_id, "") # Clear state
+            return
+
+        self._reply_message(reply_token, [TextMessage(text=f"好的，收到您的修改指令：「{prompt}」，正在為您生成圖片，請稍候...")])
+        self.storage_service.set_user_state(user_id, "") # Clear state after starting
+
+        def task():
+            new_image_bytes, status_msg = self.image_service.generate_image_from_image(
+                base_image_bytes=image_bytes,
+                prompt=prompt
+            )
+            
+            if new_image_bytes:
+                image_url, upload_status = self.storage_service.upload_image(new_image_bytes)
+                if image_url:
+                    messages = [ImageMessage(originalContentUrl=image_url, previewImageUrl=image_url)]
+                else:
+                    messages = [TextMessage(text=f"圖片上傳失敗: {upload_status}")]
+            else:
+                messages = [TextMessage(text=f"以圖生圖失敗: {status_msg}")]
+            self._push_message(user_id, messages)
+
         self._execute_in_background(task)
 
     def _create_location_carousel(self, places: list, query: str) -> TemplateMessage:

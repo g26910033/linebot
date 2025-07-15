@@ -5,6 +5,7 @@ Handles fetching content from URLs.
 import re
 import requests
 from bs4 import BeautifulSoup
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -51,3 +52,39 @@ class WebService:
         except Exception as e:
             logger.error(f"Error processing URL content from {url}: {e}")
             return None
+
+    def get_youtube_transcript(self, url: str) -> str | None:
+        """
+        Fetches the transcript for a given YouTube URL.
+        """
+        video_id_match = self._YOUTUBE_PATTERN.search(url)
+        if not video_id_match:
+            return None
+        video_id = video_id_match.group(6)
+
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            # 優先尋找繁體中文，其次是英文，最後是任何可用的語言
+            transcript = None
+            try:
+                transcript = transcript_list.find_transcript(['zh-Hant', 'zh-TW'])
+            except NoTranscriptFound:
+                try:
+                    transcript = transcript_list.find_transcript(['en'])
+                except NoTranscriptFound:
+                    # 抓取第一個可用的自動生成字幕
+                    for trans in transcript_list:
+                        if trans.is_generated:
+                            transcript = trans
+                            break
+                    if not transcript:
+                        raise NoTranscriptFound("No suitable transcript found.")
+
+            transcript_text = ' '.join([item['text'] for item in transcript.fetch()])
+            return transcript_text
+        except (NoTranscriptFound, TranscriptsDisabled):
+            logger.warning(f"No transcript found or transcripts are disabled for YouTube video: {video_id}")
+            return "這部影片沒有可用的字幕。"
+        except Exception as e:
+            logger.error(f"Error fetching YouTube transcript for video {video_id}: {e}")
+            return "抱歉，獲取影片字幕時發生錯誤。"

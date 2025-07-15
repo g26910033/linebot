@@ -3,6 +3,7 @@ AI 意圖解析服務模組
 負責從自然語言文本中解析出結構化的資訊。
 """
 import json
+import re
 import pytz
 from datetime import datetime
 from config.settings import AppConfig
@@ -94,12 +95,19 @@ class AIParsingService:
             {json_structure_prompt}
             """
         try:
-            cleaned_response = self._generate_content(prompt)
-            return json.loads(cleaned_response)
+            raw_response = self._generate_content(prompt)
+            # 使用正規表達式提取 JSON 物件
+            json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if not json_match:
+                logger.error(f"No JSON object found in AI response for query '{query}'. Raw response: '{raw_response}'")
+                return None
+            
+            json_string = json_match.group(0)
+            return json.loads(json_string)
         except json.JSONDecodeError as e:
             logger.error(
                 f"Location search failed for query '{query}' due to "
-                f"JSONDecodeError: {e}. Raw AI response: '{cleaned_response}'",
+                f"JSONDecodeError: {e}. Raw AI response: '{raw_response}'",
                 exc_info=True)
             return None
         except Exception as e:
