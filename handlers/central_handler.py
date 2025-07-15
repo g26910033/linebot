@@ -105,13 +105,26 @@ class CentralHandler:
 
     def _handle_url_message(self, user_id, url):
         def task():
-            self._push_message(user_id, [TextMessage(text="收到您的網址了，正在為您分析摘要...")])
-            content = self.web_service.fetch_url_content(url)
-            if not content:
-                summary = "抱歉，無法讀取這個網址的內容。"
+            self._push_message(user_id, [TextMessage(text="收到您的連結了，AI 正在努力為您處理中，請稍候...")])
+            summary = ""
+            if self.web_service.is_youtube_url(url):
+                try:
+                    # 直接呼叫 Gemini 的內建工具
+                    video_summary = Youtube(
+                        url=url,
+                        question="請用繁體中文提供這部影片的詳細摘要"
+                    )
+                    summary = f"✅ AI 影片摘要完成！\n\n{video_summary}"
+                except Exception as e:
+                    logger.error(f"處理 YouTube 摘要時發生錯誤: {e}")
+                    summary = '抱歉，處理這部影片時發生了一點問題，請稍後再試。'
             else:
-                summary = self.text_service.summarize_text(content)
-            self._push_message(user_id, [TextMessage(text=f"網址摘要：\n\n{summary}")])
+                content = self.web_service.fetch_url_content(url)
+                if not content:
+                    summary = "抱歉，無法讀取這個網址的內容。"
+                else:
+                    summary = self.text_service.summarize_text(content)
+            self._push_message(user_id, [TextMessage(text=summary)])
         self._execute_in_background(task)
 
     def _handle_image_features_options(self, reply_token):

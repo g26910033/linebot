@@ -28,12 +28,9 @@ class AIImageService:
             logger.warning("Image model name not configured. AIImageService will be disabled.")
             return
         try:
-            response = self.image_gen_model.generate_images(
-                prompt=prompt, number_of_images=1)
-            if not response.images:
-                logger.warning(f"Image generation returned no images for prompt: {prompt}")
-                return None, "抱歉，AI 無法根據您的提示生成圖片，請換個說法試試看。"
-            return response.images[0]._image_bytes, "Vertex AI Imagen 繪圖成功！"
+            logger.info(f"Attempting to load ImageGenerationModel: {self.config.image_model_name}")
+            self.image_gen_model = ImageGenerationModel.from_pretrained(self.config.image_model_name)
+            logger.info(f"Image generation model '{self.config.image_model_name}' loaded successfully.")
         except Exception as e:
             logger.critical(
                 f"CRITICAL: AIImageService model initialization failed: {e}",
@@ -103,14 +100,14 @@ class AIImageService:
             base_image = Image(image_bytes=base_image_bytes)
             translated_prompt = self.translate_prompt_for_drawing(prompt)
 
-            # safety_settings is not currently used in the edit_image call
-            # according to the latest documentation. If needed in the future,
-            # it can be passed as a parameter.
             response = self.image_gen_model.edit_image(
                 base_image=base_image,
                 prompt=translated_prompt,
                 number_of_images=1
             )
+            if not response.images:
+                logger.warning(f"Image editing returned no images for prompt: {prompt}")
+                return None, "抱歉，AI 無法根據您的提示修改圖片，請換個說法試試看。"
             return response.images[0]._image_bytes, "以圖生圖成功！"
         except Exception as e:
             logger.error(f"Vertex AI image-to-image generation failed: {e}")
